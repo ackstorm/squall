@@ -27,6 +27,22 @@ controller:
   replicas: 1
   leaderElect: true
   healthProbeBindAddress: ":8081"
+  # The Prometheus endpoint, on by default. Empty (or "0") disables it.
+  #
+  # It was absent until 2026-09-01, which left squall_model_{age,uncontrolled,
+  # price}_* registered and unreachable in every Helm install — and since
+  # spec.maxLifetime is alert-only and never actuated, that field did nothing
+  # at all.
+  #
+  # Secure by default because the chart already ships exactly the RBAC this
+  # mode needs: squall-metrics-auth-role grants the controller tokenreviews
+  # and subjectaccessreviews, and squall-metrics-reader exists for a scraper
+  # to bind to. controller-runtime self-signs, so a scraper needs a bearer
+  # token from a ServiceAccount bound to squall-metrics-reader, and
+  # insecure_skip_verify (or metricsCertPath, which this chart does not wire).
+  # Set metricsSecure: false for a plaintext endpoint on the pod network.
+  metricsBindAddress: ":8443"
+  metricsSecure: true
   image:
     repository: ghcr.io/ackstorm/squall-controller
     # Empty follows .Chart.AppVersion. Set it only to pin a build that is not

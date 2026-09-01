@@ -38,10 +38,20 @@ spec:
       - name: manager
         image: "{{ .Values.controller.image.repository }}:{{ .Values.controller.image.tag | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
+        {{- with .Values.controller.metricsBindAddress }}
+        ports:
+          - name: metrics
+            containerPort: {{ trimPrefix ":" . | int }}
+            protocol: TCP
+        {{- end }}
         args:
           - --health-probe-bind-address={{ .Values.controller.healthProbeBindAddress }}
           {{- if .Values.controller.leaderElect }}
           - --leader-elect
+          {{- end }}
+          {{- with .Values.controller.metricsBindAddress }}
+          - --metrics-bind-address={{ . }}
+          - --metrics-secure={{ $.Values.controller.metricsSecure }}
           {{- end }}
         env:
           - name: SQUALL_DSTACK_URL
