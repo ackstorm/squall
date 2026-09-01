@@ -42,7 +42,7 @@ jobs:
     steps:
       # fetch-depth: 0 — qa-security's gitleaks/trufflehog scan the checkout,
       # and the default shallow clone would only ever show them one commit.
-      - uses: actions/checkout@v6  # v4.3.1
+      - uses: actions/checkout@v7  # v4.3.1
         with:
           fetch-depth: 0
 
@@ -78,7 +78,7 @@ jobs:
       contents: write   # create the GitHub Release and upload its assets
       packages: write   # push images and the chart to GHCR
     steps:
-      - uses: actions/checkout@v6  # v4.3.1
+      - uses: actions/checkout@v7  # v4.3.1
 
       - name: Set up devtools (pull or build)
         uses: ./.github/actions/setup-devtools
