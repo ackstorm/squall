@@ -95,7 +95,7 @@ doctor: ## Fast local preflight: docker, devtools image, socket, cache paths, in
 	@for d in .gocache/gopath .gocache/build .gocache/envtest .gocache/kube; do test -d "$$d" && echo "OK   $$d" || echo "WARN $$d missing (created on first dev.sh run)"; done
 	@test -f go.mod && echo "OK   go.mod present" || echo "INFO no go.mod yet (kubebuilder scaffold = plan Phase 2)"
 	@./scripts/dev.sh bash -c '\
-	  for t in go kubebuilder controller-gen kustomize setup-envtest kind helm kubectl govulncheck; do \
+	  for t in go kubebuilder controller-gen setup-envtest kind helm kubectl govulncheck; do \
 	    command -v $$t >/dev/null 2>&1 && echo "OK   (container) $$t" || echo "FAIL (container) $$t MISSING"; \
 	  done; \
 	  for t in golangci-lint; do \
@@ -146,7 +146,7 @@ _gen-code:
 gen-manifests: ## Generate WebhookConfiguration, Role and CustomResourceDefinition objects.
 	$(call container_target,_gen-manifests)
 _gen-manifests:
-	$(call go_or_skip,$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook $(CONTROLLER_GEN_PATHS) output:crd:artifacts:config=config/crd/bases)
+	$(call go_or_skip,$(CONTROLLER_GEN) rbac:roleName=manager-role crd $(CONTROLLER_GEN_PATHS) output:crd:artifacts:config=config/crd/bases)
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
@@ -261,14 +261,13 @@ $(LOCALBIN):
 	mkdir -p $(LOCALBIN)
 
 ## Tool binaries.
-# controller-gen, kustomize and setup-envtest are BAKED into the devtools image
+# controller-gen and setup-envtest are BAKED into the devtools image
 # under /usr/local/bin (Dockerfile.devtools sets GOBIN=/usr/local/bin), pinned
 # there by ARG. The bare name therefore resolves on PATH in every context these
 # targets actually run in — inside the container. golangci-lint is deliberately
 # not baked (it churns faster than the rest of the toolchain); it is go-installed
 # on demand into $(LOCALBIN) by go-install-tool.
 KUBECTL ?= kubectl
-KUSTOMIZE ?= kustomize
 CONTROLLER_GEN ?= controller-gen
 ENVTEST ?= setup-envtest
 GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint

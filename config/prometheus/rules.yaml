@@ -4,8 +4,11 @@
 # rule": monitoring only ever reads metrics already emitted by the
 # controller, it never itself probes the gateway or engine) —
 # parameterised only by which metric pair each alert compares. Requires
-# the Prometheus Operator CRDs (monitoring.coreos.com/v1), the same stack
-# config/prometheus/monitor.yaml's ServiceMonitor targets.
+# the Prometheus Operator CRDs (monitoring.coreos.com/v1).
+#
+# NOT SHIPPED: the Helm chart does not template this file, so nothing
+# installs it. rules_test.go keeps its shape honest; deploying it is a
+# manual `kubectl apply` until the chart carries it.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
