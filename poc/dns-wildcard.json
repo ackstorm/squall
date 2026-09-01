@@ -1,0 +1,12 @@
+{
+  "Comment": "Wildcard for dstack gateway squall-gw; services resolve as <run>.gpu.genai.internal",
+  "Changes": [{
+    "Action": "UPSERT",
+    "ResourceRecordSet": {
+      "Name": "*.gpu.genai.internal",
+      "Type": "A",
+      "TTL": 60,
+      "ResourceRecords": [{"Value": "10.5.3.245"}]
+    }
+  }]
+}

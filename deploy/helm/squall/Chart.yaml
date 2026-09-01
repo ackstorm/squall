@@ -1,0 +1,13 @@
+apiVersion: v2
+name: squall
+description: >-
+  Squall (external GPU capacity for LLM serving via dstack + LiteLLM): the
+  Model CRD, squall-controller, squall-proxy and their RBAC. This is the real
+  deployment artifact — the kind e2e cluster installs this chart, not a
+  bespoke kustomize overlay. See docs/references/deviations-and-findings.md.
+type: application
+# Chart and app are versioned together for 0.1.0: this chart exists only to
+# deploy this operator, so a chart version that runs ahead of appVersion says
+# there were chart-only releases, and there have not been any.
+version: 0.1.0
+appVersion: "0.1.0"

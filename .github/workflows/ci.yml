@@ -1,0 +1,151 @@
+name: ci
+
+# PR-only: branch protection on main enforces the PR workflow, so the
+# pull_request event is the single CI trigger.
+#
+# The invariant that makes this file trustworthy: EVERY step below is
+# `./scripts/dev.sh make <target>`. CI never reimplements a local command, so
+# CI and local cannot drift apart. If a job appears to need something `make`
+# cannot do, add the make target — do not inline shell here.
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - 'NOTICE'
+      - 'CODEOWNERS'
+      - '.gitignore'
+
+# main is PR-only (branch protection enforces). Post-merge content equals
+# PR head content, so re-running on push main is redundant.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6  # v4.3.1
+
+      - name: Set up devtools (pull or build)
+        uses: ./.github/actions/setup-devtools
+
+      - name: Run linter
+        run: ./scripts/dev.sh make qa-lint
+
+      - name: Check gofmt cleanliness
+        run: ./scripts/dev.sh make qa-fmt-check
+
+      - name: Check Helm chart / CRD drift
+        run: ./scripts/dev.sh make helm-sync-check
+
+  unit:
+    name: Unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6  # v4.3.1
+
+      - name: Set up devtools (pull or build)
+        uses: ./.github/actions/setup-devtools
+
+      - name: Run unit tests
+        run: ./scripts/dev.sh make test-unit
+
+      - name: Upload unit coverage
+        if: always()
+        uses: actions/upload-artifact@v7  # v4.6.2
+        with:
+          name: cover-unit
+          path: cover-unit.out
+          if-no-files-found: warn
+
+  envtest:
+    name: Envtest
+    runs-on: ubuntu-latest
+    needs: unit
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6  # v4.3.1
+
+      - name: Set up devtools (pull or build)
+        uses: ./.github/actions/setup-devtools
+
+      # test-envtest is the race-enabled variant and is THE CI gate.
+      # test-envtest-fast (no -race) exists for the local inner loop only;
+      # do not swap it in here to save minutes.
+      - name: Run controller envtest
+        run: ./scripts/dev.sh make test-envtest
+
+      - name: Upload envtest coverage
+        if: always()
+        uses: actions/upload-artifact@v7  # v4.6.2
+        with:
+          name: cover-envtest
+          path: cover-envtest.out
+          if-no-files-found: warn
+
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      # fetch-depth: 0 (full history) — this job's checkout is what
+      # gitleaks/trufflehog scan (see scripts/security-scan.sh); the default
+      # shallow (depth-1) clone would only ever see the single latest commit.
+      - uses: actions/checkout@v6  # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up devtools (pull or build)
+        uses: ./.github/actions/setup-devtools
+
+      # D36: gitleaks + trufflehog + the internal-hostname/ackstorm-email
+      # sweep, over the full checkout — see scripts/security-scan.sh. This is
+      # the CI backstop for scripts/pre-push-check.sh's checks 1/2/7/8, which
+      # nobody is required to install locally.
+      - name: Run security gate
+        run: ./scripts/dev.sh make qa-security
+
+  e2e:
+    name: E2E (kind + ginkgo)
+    runs-on: ubuntu-latest
+    needs: [unit, envtest]
+    timeout-minutes: 30
+    if: "!github.event.pull_request.draft"
+    steps:
+      - uses: actions/checkout@v6  # v4.3.1
+
+      - name: Set up devtools (pull or build)
+        uses: ./.github/actions/setup-devtools
+
+      # CI does cluster lifecycle as explicit steps (GH Actions cannot share a
+      # bash trap across steps): cluster-up → e2e-run → cluster-down.
+      #   cluster-up   → 'needs: success' (default)
+      #   e2e-run      → 'needs: cluster-up succeeded'
+      #   cluster-down → 'if: always()' (trap equivalent)
+      # NOTE: `make e2e-full` is the LOCAL convenience target and deliberately
+      # KEEPS the cluster (no teardown) for fast re-runs; CI does NOT use it
+      # and owns teardown via the `if: always()` step below.
+      #
+      # All three targets are stubs until plan Phases 11-12; failure forensics
+      # collection arrives with them, as a make target, not as inline YAML.
+      - name: Cluster up + hydrate (same as make cluster-up)
+        run: ./scripts/dev.sh make cluster-up
+
+      - name: Run E2E suite (same as make e2e-run)
+        run: ./scripts/dev.sh make e2e-run
+
+      - name: Cluster down (trap equivalent — always runs)
+        if: always()
+        run: ./scripts/dev.sh make cluster-down

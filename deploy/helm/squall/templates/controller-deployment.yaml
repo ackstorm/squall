@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: squall-operator
+  namespace: {{ .Values.namespace }}
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+      app.kubernetes.io/name: squall
+  replicas: {{ .Values.controller.replicas }}
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        control-plane: controller-manager
+        app.kubernetes.io/name: squall
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: {{ .Values.controller.serviceAccountName }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 10
+      containers:
+      # No `command:` override: the root Dockerfile's ENTRYPOINT is /app
+      # (ARG CMD selects which cmd/ package to build), not kubebuilder's
+      # stock /manager.
+      - name: manager
+        image: "{{ .Values.controller.image.repository }}:{{ .Values.controller.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
+        args:
+          - --health-probe-bind-address={{ .Values.controller.healthProbeBindAddress }}
+          {{- if .Values.controller.leaderElect }}
+          - --leader-elect
+          {{- end }}
+        env:
+          - name: SQUALL_DSTACK_URL
+            value: {{ required "controller.env.dstackURL is required — squall-controller exits without it" .Values.controller.env.dstackURL | quote }}
+          # D124: dstack.projectName was a first-class chart value that was
+          # never rendered onto the controller — any non-"main" project made
+          # every dstack call hit a route the server does not have, while
+          # the knob appeared to work.
+          - name: SQUALL_DSTACK_PROJECT
+            value: {{ .Values.dstack.projectName | quote }}
+{{- include "squall.dstackTokenEnv" . | nindent 10 }}
+          - name: SQUALL_PROXY_SERVICE_NAMESPACE
+            value: {{ .Values.controller.env.proxyServiceNamespace | quote }}
+          - name: SQUALL_PROXY_SERVICE_NAME
+            value: {{ .Values.controller.env.proxyServiceName | quote }}
+          - name: SQUALL_IDLE_REQUEUE_INTERVAL
+            value: {{ .Values.controller.env.idleRequeueInterval | quote }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - "ALL"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          {{- toYaml .Values.controller.resources | nindent 10 }}

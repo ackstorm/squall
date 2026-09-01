@@ -1,0 +1,45 @@
+# gitleaks v8 config — extends the default ruleset with project-scoped
+# allowlists for synthetic test fixtures.
+#
+# Surgical scope: the allowlists below cover the exact sample / fixture
+# strings that appear in this repo. Any real-looking secret value WILL
+# still trigger gitleaks regardless of file path.
+#
+# Ported from ../alitellm-operator, minus two allowlists that were specific
+# to that repo and have nothing to permit here: the vendored LiteLLM
+# OpenAPI spec (spec/litellm_api.json, not vendored by Squall) and its
+# per-test canary tokens. An allowlist entry that matches nothing is dead
+# config that only makes the gate harder to reason about — re-add narrowly
+# if and when a fixture actually needs it.
+
+[extend]
+useDefault = true
+
+# Allowlist 1 — fixture / sample token values that appear in tests and docs.
+# `sk-1234` is LiteLLM's own documented default master key and shows up in
+# every LiteLLM example this project will carry.
+# `regexTarget = "match"` evaluates against the gitleaks-detected match
+# (which includes the secret value), so the strings below catch every
+# occurrence of these literal tokens regardless of file path.
+[[allowlists]]
+description = "Project fixtures + upstream LiteLLM sample tokens"
+regexTarget = "match"
+regexes = [
+    '''sk-1234''',
+    '''sk-test-master-key''',
+]
+
+# Allowlist 2 — synthetic fixtures in *_test.go files where the secret
+# value contains an obvious "this is fake" marker
+# (test|canary|example|synthetic|fake|dummy). Real-looking secrets in
+# test files still fail the check.
+[[allowlists]]
+description = "Synthetic fixtures in *_test.go files"
+condition   = "AND"
+paths = [
+    '''.*_test\.go$''',
+]
+regexTarget = "match"
+regexes = [
+    '''(?i)(test|canary|example|synthetic|fake|dummy)''',
+]

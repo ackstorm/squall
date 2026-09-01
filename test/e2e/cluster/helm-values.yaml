@@ -1,0 +1,71 @@
+# Values for the e2e install of deploy/helm/squall.
+#
+# This file replaces the old 02-operator kustomize overlay. Everything the
+# overlay patched onto the two Deployments is a chart value now; the only
+# thing that cannot live here is dstack.kubernetes.proxyJump.hostname, which
+# is the kind node's InternalIP and is resolved at install time by
+# hack/cluster.sh.
+#
+# The tokens below are deliberately fixed, obviously-fake strings. Never put
+# a value here that could pass for a real credential.
+
+namespace: squall-system
+
+controller:
+  image:
+    repository: squall-controller
+    tag: e2e
+    # The image is `kind load`-ed, never pulled.
+    pullPolicy: Never
+  env:
+    dstackURL: http://dstack.squall-system.svc.cluster.local:3000
+    dstackToken: e2e-local-token
+    proxyServiceNamespace: squall-system
+    proxyServiceName: squall-proxy
+    # Far below the production default so the idle->sleep flip is
+    # observable inside a test's patience.
+    idleRequeueInterval: 2s
+
+proxy:
+  # e2e-only: 2 replicas prove the idle flip aggregates across replicas
+  # rather than trusting a single one.
+  replicas: 2
+  image:
+    repository: squall-proxy
+    tag: e2e
+    pullPolicy: Never
+  # These live under proxy.env, matching templates/proxy-deployment.yaml.
+  # Getting the nesting wrong does NOT fail the install: every env var
+  # renders as the empty string and the proxy comes up healthy but inert
+  # (SQUALL_NAMESPACE="" makes the demand patch target namespace "", which
+  # DemandCoalescer swallows by design). See ledger D54.
+  env:
+    namespace: squall
+    demandCooldown: 1s
+    # LIVE-3, corrected: no override needed. The proxy now derives its
+    # per-hold refresh cadence from EACH Model's own scaleDownDelaySeconds
+    # (internal/proxy.refreshIntervalFor), not from one proxy-wide setting —
+    # this fixture's own scaleDownDelaySeconds is 2s (03-fixtures/model.yaml),
+    # which derives to 500ms (2s/10 floored at 500ms) automatically. A flat
+    # SQUALL_DEMAND_REFRESH_INTERVAL override here previously stood in for
+    # that per-Model value; removing it is the proof the derivation is
+    # correct — see docs/references/deviations-and-findings.md LIVE-3.
+    # D25 is still OPEN: Run.ServiceURL is populated by the client but not
+    # yet wired into squall-proxy's Backend, so the proxy still resolves a
+    # backend by template. %s is the Model name, which is why model-mock is
+    # fronted by one Service per Model (01-model-mock/model-mock-services.yaml).
+    backendURLTemplate: http://%s.squall.svc.cluster.local:8080
+
+dstack:
+  adminToken: e2e-local-token
+  # Real Postgres (test/e2e/cluster/02-postgres), proving the chart's
+  # dstack.database wiring end to end instead of the SQLite fallback —
+  # see values.yaml's dstack.database comment for why SQLite is
+  # development-only, and 02-postgres/postgres_secret.yaml for the
+  # fixed, obviously-fake e2e credential this Secret holds.
+  database:
+    host: squall-postgres.squall-system.svc.cluster.local
+    port: 5432
+    existingSecret:
+      name: squall-postgres-credentials
+      key: database-url

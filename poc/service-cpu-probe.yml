@@ -1,0 +1,44 @@
+type: service
+name: squall-cpu-probe
+
+# CPU-only probe: this PoC answers control-plane questions (registration at zero
+# replicas, gateway behaviour with no upstream, in-place flip timing, teardown).
+# None of those need a GPU. Running llama.cpp additionally exercises the
+# OpenAI-compatible contract, which is the llama.cpp half of spec PoC 8.
+image: ghcr.io/ggml-org/llama.cpp:server
+commands:
+  - >
+    /app/llama-server
+    -hf unsloth/Llama-3.2-1B-Instruct-GGUF
+    --hf-file Llama-3.2-1B-Instruct-Q4_K_M.gguf
+    --host 0.0.0.0 --port 8080
+    --metrics
+port: 8080
+
+# The gateway runs `certificate: null`, so TLS cannot be terminated for it.
+# Services default to `https: auto` and dstack then refuses with
+# "Cannot run HTTPS service on gateway with no SSL certificates configured".
+# Plain HTTP is correct here: the whole path is inside the VPC.
+https: false
+
+# FIXED replica count, never a range, and deliberately no `scaling:` block.
+# configurations.py:1144-1147 makes these mutually exclusive: a range REQUIRES
+# scaling, a fixed count FORBIDS it. With no scaling block dstack uses
+# ManualScaler, which only clamps and never raises the count on its own - so
+# dstack's native "scale up immediately at zero" (autoscalers.py:89-92) is
+# unreachable by construction and the reconciler is the sole 0->1 owner.
+replicas: 0
+
+resources:
+  cpu: 2
+  memory: 4GB
+
+# Non-burstable on purpose: t3 would drain CPU credits under sustained llama.cpp
+# inference and then throttle to baseline, making any timing measured here a lie.
+instance_types:
+  - c7i.large
+
+model:
+  type: chat
+  name: llama-3.2-1b-cpu
+  format: openai

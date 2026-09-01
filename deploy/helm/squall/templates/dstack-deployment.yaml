@@ -1,0 +1,280 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dstack-data
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: dstack
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  accessModes:
+  - ReadWriteOnce
+  {{- if .Values.dstack.storage.storageClassName }}
+  storageClassName: {{ .Values.dstack.storage.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.dstack.storage.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dstack
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: dstack
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  # A second replica would bootstrap its own admin user/SQLite state and race
+  # the first over the shared PVC. dstack's own operational model is a
+  # single server instance.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: squall
+      app.kubernetes.io/component: dstack
+  template:
+    metadata:
+      annotations:
+        # Rolls the Pod when config.yml changes. Without this, editing
+        # dstack.backends updates the Secret but leaves the pod spec
+        # byte-identical, so nothing restarts — and render-config only runs
+        # at startup, so the server keeps serving the PREVIOUS backends while
+        # `helm upgrade` reports success. Same class as the e2e's stale-image
+        # trap (ledger D40).
+        checksum/config: {{ include (print $.Template.BasePath "/dstack-config-secret.yaml") . | sha256sum }}
+      labels:
+        app.kubernetes.io/name: squall
+        app.kubernetes.io/component: dstack
+    spec:
+      serviceAccountName: dstack-backend
+      # dstack has no in-cluster config support (core/backends/kubernetes/utils.py
+      # only reads kubeconfig.filename/data) — this init container builds one
+      # from this Pod's own ServiceAccount token, so the Kubernetes backend
+      # authenticates as `dstack-backend` against the very cluster the Pod
+      # runs in.
+      initContainers:
+      - name: build-kubeconfig
+        image: "{{ .Values.dstack.image.repository }}:{{ .Values.dstack.image.tag }}"
+        imagePullPolicy: {{ .Values.dstack.image.pullPolicy }}
+        command:
+        - sh
+        - -c
+        - |
+          set -eu
+          ca_b64="$(base64 -w0 < /var/run/secrets/dstack-sa/ca.crt)"
+          token="$(cat /var/run/secrets/dstack-sa/token)"
+          cat > /etc/dstack/kubeconfig/kubeconfig <<EOF
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - name: incluster
+            cluster:
+              server: https://kubernetes.default.svc
+              certificate-authority-data: ${ca_b64}
+          contexts:
+          - name: {{ .Values.dstack.kubernetes.contextName }}
+            context:
+              cluster: incluster
+              user: dstack-backend
+              namespace: {{ .Values.dstack.runsNamespace }}
+          current-context: {{ .Values.dstack.kubernetes.contextName }}
+          users:
+          - name: dstack-backend
+            user:
+              token: ${token}
+          EOF
+        volumeMounts:
+        - name: sa-token
+          mountPath: /var/run/secrets/dstack-sa
+          readOnly: true
+        - name: kubeconfig
+          mountPath: /etc/dstack/kubeconfig
+      {{- if .Values.dstack.database.host }}
+      - name: wait-for-postgres
+        # dstack runs alembic migrations at startup (server/db.py) and would
+        # crash-loop against a database refusing connections. Bounded retry
+        # with an explicit failure exit — never a naked `until`/`while` loop,
+        # which can never terminate if the target is gone for good (see
+        # docs/references/toolchain-and-traps.md). 30 attempts * 2s = 60s,
+        # then fail loudly; a failed init container is retried by the
+        # kubelet under the Pod's restartPolicy, so exiting non-zero is the
+        # correct way to give up rather than hang.
+        image: postgres:16-alpine
+        imagePullPolicy: IfNotPresent
+        command:
+        - sh
+        - -c
+        - |
+          for i in $(seq 1 30); do
+            pg_isready -h {{ .Values.dstack.database.host | quote }} -p {{ .Values.dstack.database.port }} && exit 0
+            sleep 2
+          done
+          echo "wait-for-postgres: {{ .Values.dstack.database.host }}:{{ .Values.dstack.database.port }} not ready after 60s" >&2
+          exit 1
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          # postgres:16-alpine's own image config declares root as the
+          # default user (its entrypoint needs root to chown PGDATA before
+          # dropping to postgres via gosu) — with no runAsUser, the kubelet
+          # refuses to start a runAsNonRoot=true container against an image
+          # declared to run as root ("container has runAsNonRoot and image
+          # will run as root"), even though this init container never
+          # exercises that entrypoint. UID 70 is the image's own `postgres`
+          # user (confirmed: `id postgres` inside the image), which is all
+          # `pg_isready` needs.
+          runAsUser: 70
+          capabilities:
+            drop: ["ALL"]
+      {{- end }}
+      - name: render-config
+        image: "{{ .Values.dstack.image.repository }}:{{ .Values.dstack.image.tag }}"
+        imagePullPolicy: {{ .Values.dstack.image.pullPolicy }}
+        {{- if .Values.dstack.credentialsSecretName }}
+        # Every key of the user's Secret becomes an env var, so a backend
+        # block can reference it as ${KEY}. The Secret is NOT managed by this
+        # chart and never passes through a values file.
+        envFrom:
+        - secretRef:
+            name: {{ .Values.dstack.credentialsSecretName }}
+        {{- end }}
+        command:
+        - python3
+        - -c
+        - |
+          # dstack does NOT interpolate environment variables in
+          # server/config.yml (verified in server/services/config.py), so the
+          # substitution has to happen before the server ever reads it.
+          #
+          # Template.substitute, not safe_substitute: an unresolved ${VAR}
+          # must CRASH the pod, not render an empty api_key and leave dstack
+          # failing every provision with an opaque auth error.
+          import os, string, pathlib
+          src = pathlib.Path("/etc/dstack/config-template/config.yml").read_text()
+          try:
+              out = string.Template(src).substitute(os.environ)
+          except KeyError as e:
+              raise SystemExit(
+                  f"dstack config references {e} but no such key exists in "
+                  f"the credentials Secret (dstack.credentialsSecretName)")
+          pathlib.Path("/etc/dstack/config/config.yml").write_text(out)
+          print("rendered server/config.yml")
+        volumeMounts:
+        - name: config-template
+          mountPath: /etc/dstack/config-template
+          readOnly: true
+        - name: config
+          mountPath: /etc/dstack/config
+      containers:
+      - name: dstack
+        image: "{{ .Values.dstack.image.repository }}:{{ .Values.dstack.image.tag }}"
+        imagePullPolicy: {{ .Values.dstack.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 3000
+        env:
+        - name: DSTACK_SERVER_ADMIN_TOKEN
+          value: {{ required "dstack.adminToken is required — see values.yaml's comment on it" .Values.dstack.adminToken | quote }}
+        {{- if .Values.dstack.database.existingSecret.name }}
+        # DSTACK_DATABASE_URL is the ONLY switch dstack reads for its DB
+        # backend (server/settings.py's get_database_url()) — sourced from a
+        # Secret that already exists in this namespace, never a values.yaml
+        # literal. See values.yaml's dstack.database comment for why SQLite
+        # (the fallback when this is unset) is development-only.
+        - name: DSTACK_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.dstack.database.existingSecret.name }}
+              key: {{ .Values.dstack.database.existingSecret.key }}
+        # How long dstack's service proxy waits for a replica's response
+        # HEADERS. Its default is 60s, copied from nginx, and for a
+        # NON-streaming completion vLLM sends no headers until generation
+        # finishes — so the whole generation, plus any queueing ahead of it,
+        # must fit inside this one read. Measured externally 2026-08-28:
+        # max_tokens 3000 returned 200 at 59.9s and 4000 returned
+        # 504 {"detail":"Timed out requesting upstream"} at 60.02s, and raising
+        # concurrency dragged every request toward the same ceiling because
+        # queueing counts against it.
+        #
+        # Streaming requests are unaffected either way: httpx applies this
+        # per-read, not per-request, so chunks arriving every few milliseconds
+        # never approach it.
+        #
+        # This whole setting disappears for models reached over squall's own
+        # SSH tunnel, which takes dstack's proxy out of the data path.
+        - name: DSTACK_SERVICE_CLIENT_TIMEOUT
+          value: {{ .Values.dstack.serviceClientTimeoutSeconds | quote }}
+        - name: DSTACK_DB_POOL_SIZE
+          value: {{ .Values.dstack.database.poolSize | quote }}
+        - name: DSTACK_DB_MAX_OVERFLOW
+          value: {{ .Values.dstack.database.maxOverflow | quote }}
+        {{- end }}
+        volumeMounts:
+        - name: data
+          mountPath: /root/.dstack/server
+        - name: config
+          mountPath: /root/.dstack/server/config.yml
+          subPath: config.yml
+          readOnly: true
+        - name: kubeconfig
+          mountPath: /etc/dstack/kubeconfig
+          readOnly: true
+        # Measured: server startup (migrations + background schedulers) takes
+        # noticeably longer than the Go binaries' — a 5s/15s delay flapped it.
+        readinessProbe:
+          httpGet:
+            path: /healthcheck
+            port: http
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthcheck
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          failureThreshold: 5
+        resources:
+          {{- toYaml .Values.dstack.resources | nindent 10 }}
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: dstack-data
+      # The rendered config, produced by the render-config init container.
+      # emptyDir, not a Secret: the resolved credentials exist only for this
+      # Pod's lifetime and are never written to the API server.
+      - name: config
+        emptyDir: {}
+      # The TEMPLATE, which holds ${VAR} placeholders rather than secrets —
+      # still a Secret because a values file may legitimately inline a
+      # credential instead of referencing one.
+      - name: config-template
+        secret:
+          secretName: dstack-config
+      - name: kubeconfig
+        emptyDir: {}
+      - name: sa-token
+        secret:
+          secretName: dstack-backend-token
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dstack
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: dstack
+spec:
+  selector:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: dstack
+  ports:
+  - name: http
+    port: 3000
+    targetPort: http

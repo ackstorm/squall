@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.proxy.serviceAccountName }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: squall-proxy-role
+rules:
+- apiGroups:
+  - squall.ackstorm.ai
+  resources:
+  - models
+  verbs:
+  - get
+  - list
+  - watch
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: squall-proxy-rolebinding
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: squall-proxy-role
+subjects:
+- kind: ServiceAccount
+  name: {{ .Values.proxy.serviceAccountName }}
+  namespace: {{ .Values.namespace }}
+---
+# Namespaced, and deliberately NOT part of the ClusterRole above: the proxy
+# needs exactly one Secret — squall's replica SSH key — in its own namespace,
+# and resourceNames pins it to that one. A cluster-wide secrets grant to the
+# component holding the internet-facing data path is not a trade worth making.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: squall-proxy-replica-key
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["squall-replica-ssh-key"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: squall-proxy-replica-key
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: squall-proxy-replica-key
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.proxy.serviceAccountName }}
+    namespace: {{ .Values.namespace }}

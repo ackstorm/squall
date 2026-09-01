@@ -1,0 +1,44 @@
+# PrometheusRule for the §10/AC19 declared/observed gauge pairs emitted by
+# internal/metrics (ModelAgeCollector, ModelPriceCollector). Both alerts
+# share one generic "observed > declared" shape (spec §10's "two-lane
+# rule": monitoring only ever reads metrics already emitted by the
+# controller, it never itself probes the gateway or engine) —
+# parameterised only by which metric pair each alert compares. Requires
+# the Prometheus Operator CRDs (monitoring.coreos.com/v1), the same stack
+# config/prometheus/monitor.yaml's ServiceMonitor targets.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/managed-by: kustomize
+  name: squall-model-metrics
+  namespace: system
+spec:
+  groups:
+    - name: squall.model-metrics
+      rules:
+        - alert: SquallModelExceededMaxLifetime
+          expr: squall_model_age_seconds > squall_model_max_lifetime_seconds
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Model {{ $labels.name }} has run past its declared maxLifetime
+            description: >-
+              spec.maxLifetime is ALERT-ONLY (§5.2) — nothing kills the run
+              automatically. squall_model_age_seconds has exceeded
+              squall_model_max_lifetime_seconds for 5m; decide by hand
+              whether to recreate the run.
+        - alert: SquallModelExceededMaxPricePerHour
+          expr: squall_model_price_per_hour > squall_model_max_price_per_hour
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Model {{ $labels.name }}'s observed price exceeds its declared cap
+            description: >-
+              squall_model_price_per_hour (from dstack) has exceeded
+              spec.placement.maxPricePerHour for 5m. Ledger D26: no
+              production observed-price source exists yet, so this alert
+              cannot fire until D26 is resolved.

@@ -1,0 +1,49 @@
+# Allowlist for scripts/pre-push-check.sh's hard-fail checks #7 (internal
+# hostname / private IPv4) and #8 (ackstorm email). D36 made both checks
+# hard failures; this file is the narrow, explicit escape hatch for the
+# handful of matches that are legitimate today, so a real leak still fails
+# the push.
+#
+# Format: one "<check>:<path>" pair per line, path relative to repo root,
+# matched against the WHOLE path of the file the hit was found in (exact
+# match, not a substring/glob). <check> is one of: hostname, privip, email.
+# Every entry needs the one-line reason in a comment above it — this file
+# is reviewed, not rubber-stamped.
+
+# privip: devcontainer bootstrap creates a local docker bridge network for
+# `kind` — a private subnet by definition, not a real internal host.
+privip:.devcontainer/post-install.sh
+
+# privip: RFC 5737/1918-style example addresses used as endpoint-address
+# test fixtures (TestAggregateActivity table), not real infrastructure.
+privip:internal/controller/squall/activity_test.go
+
+# privip: PoC scratch artifact recording a synthetic DNS-wildcard lookup
+# result, not a real internal address.
+privip:poc/dns-wildcard.json
+
+# privip: RFC1918 example addresses inside a FROZEN plan document — the same
+# TestAggregateActivity endpoint fixtures already allowlisted above for
+# internal/controller/squall/activity_test.go, quoted verbatim in the plan
+# that specified them. Plans are append-only history, not living config.
+privip:docs/plans/2026-08-27-block-serving-path.md
+
+# privip: the kind node's InternalIP in an install-time example. A kind
+# cluster's node address is private by definition and local to whoever runs
+# it; the surrounding text tells the reader to resolve it themselves.
+privip:docs/plans/2026-08-27-helm-chart-and-dstack-in-cluster.md
+
+# privip: the same endpoint-address fixtures as activity_test.go above, in the
+# gather-path table that replaced it when §6 moved to EndpointSlice.
+privip:internal/controller/squall/activity_gather_test.go
+
+# privip: a ReplicaEndpoint Host fixture in the reaper table — a synthetic
+# address the test never dials, not real infrastructure.
+privip:internal/controller/squall/reaper_test.go
+
+# privip: RFC1918 example addresses inside plan documents, quoting the same
+# endpoint fixtures already allowlisted above, plus one measured kind pod
+# address from a throwaway cluster. Plans are append-only history, not living
+# config (same reasoning as 2026-08-27-block-serving-path.md).
+privip:docs/plans/2026-09-01-guardian-handshake-and-uncontrolled-capacity.md
+privip:docs/plans/2026-09-01-review-findings-before-tag.md

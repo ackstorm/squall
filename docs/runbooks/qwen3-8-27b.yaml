@@ -1,0 +1,47 @@
+# The live test Model: identical to the run that produced the 2026-08-29
+# incident, plus spec.health. Applied by hand, not by Flux — this is a runbook
+# fixture for the live battery, not a deployed workload.
+apiVersion: squall.ackstorm.ai/v1alpha1
+kind: Model
+metadata:
+  name: qwen3-8-27b
+  namespace: squall
+spec:
+  engine: vllm
+  image: vllm/vllm-openai@sha256:2286e8533ca8b6bc777594bae30524f1426ba46ca21797524e06df6a94b06635
+  model: Qwen/Qwen3.8-27B-FP8
+  args: ["--max-model-len", "131072", "--kv-cache-dtype", "fp8", "--reasoning-parser", "qwen3"]
+  env:
+    VLLM_LOGGING_LEVEL: INFO
+  features: [TextGeneration]
+  minReplicas: 0
+  holdTimeout: 20m
+  drainTimeout: 60s
+  maxLifetime: 168h
+  provisioningTimeout: 30m
+  scaleDownDelaySeconds: 300
+  # New 2026-08-31. Both halves are the CRD defaults; stated explicitly because
+  # this Model is the thing being tested.
+  health:
+    unhealthyAfter: 15m
+    failureThreshold: 3
+  fleet:
+    idleDuration: 10m
+  probe:
+    path: /health
+    interval: 10s
+    readyAfter: 2
+  resources:
+    cpu: {count: "4.."}
+    memory: 16GB..
+    shmSize: 8GB
+    gpu:
+      name: [RTXPRO6000WS, RTXPRO6000S]
+      memory: 90GB..
+  placement:
+    backends: [vastai]
+    maxPricePerHour: "2.20"
+    regions: [es-spain, pt-portugal, fr-france, it-italy, de-germany, nl-netherlands,
+              be-belgium, at-austria, ch-switzerland, pl-poland, cz-czechia, se-sweden,
+              fi-finland, no-norway, ie-ireland, ro-romania, bg-bulgaria, hu-hungary,
+              ee-estonia, lt-lithuania]

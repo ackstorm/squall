@@ -1,0 +1,55 @@
+# Task 12.1 (plan §"Phase 12 — Discovery seam", spec PoC 10): the
+# LiteLLMModelDiscovery CR that plugs squall-proxy's /v1/models into
+# alitellm-operator's existing `type: kubeai` provider (F27, F30) — no new
+# operator code needed anywhere.
+#
+# NOT applied by hack/cluster.sh's default hydrate sequence (00-03): this
+# repo's kind cluster has no litellm.ackstorm.ai CRDs / alitellm-operator
+# installed, and installing the sibling operator just to exercise this CR is
+# explicitly out of scope for this block. This directory exists so the exact
+# CR is version-controlled and directly `kubectl apply -k`-able against a
+# cluster that DOES have alitellm-operator installed — see
+# docs/references/phase-12-discovery-seam.md's 12.2 for the fail-closed
+# drill this CR is meant to support.
+#
+# Namespace/name here are illustrative for this repo's own dev cluster
+# (squall-system, where config/proxy/service.yaml's "proxy" Service lives,
+# port 8080 per cmd/proxy/main.go's SQUALL_PROXY_ADDR default). The
+# production platform likely keeps ModelDiscovery CRs in whatever namespace
+# alitellm-operator's other discovery sources already live in (D6-adjacent —
+# final placement is a platform-repo decision, not squall's).
+apiVersion: litellm.ackstorm.ai/v1alpha1
+kind: LiteLLMModelDiscovery
+metadata:
+  name: squall-external
+  namespace: squall-system
+spec:
+  type: kubeai
+
+  # Distinct from the default prefix (lowercased(type) = "kubeai") so
+  # generated child Model names never collide with an in-cluster kubeai
+  # discovery source's children (F27: ten of those already exist in
+  # production) — both would otherwise default to the same "kubeai.<id>"
+  # shape.
+  prefix: squall
+
+  # squall-proxy's /v1/models (internal/proxy/models.go), same OpenAI-
+  # compatible listing shape the kubeai provider already understands.
+  # kubeai forbids credentialsSecretRef (no auth, in-cluster) and region.
+  baseUrl: http://proxy.squall-system.svc:8080/v1
+
+  # External router profile (F28, F32) — NOT the in-cluster default
+  # (timeout: 300, stream_timeout: 60), which is an order of magnitude
+  # below external cold starts and would cut a hold short before any
+  # client is reached. 3600s (1h) comfortably exceeds this repo's example
+  # holdTimeout (20m) and provisioningTimeout (45m) — see
+  # config/samples/squall_v1alpha1_model.yaml — satisfying §7's ordering
+  # (holdTimeout <= provisioningTimeout <= external router timeout).
+  # Params is a verbatim pass-through bag (F30): every field here lands on
+  # every generated child's litellm_params unmodified.
+  params:
+    timeout: 3600
+    stream_timeout: 3600
+
+  refresh:
+    interval: 5m

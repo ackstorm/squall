@@ -1,0 +1,117 @@
+# syntax=docker/dockerfile:1.7
+#
+# Devtools image — provides Go + kubebuilder + controller-gen + kustomize +
+# setup-envtest + docker CLI + docker-compose. The host runs no Go toolchain
+# itself; every `go`, `kubebuilder`, `make`, etc. invocation goes through
+# scripts/dev.sh, which mounts the workspace and the host Docker socket into
+# this image.
+#
+# Used by everything in Squall — nothing builds or tests outside it.
+
+FROM golang:1.26.6-bookworm
+
+# Use bash with pipefail for all RUN directives — abort on any failure in a
+# pipeline (e.g. `curl ... | tar ...`). POSIX sh swallows the curl exit code
+# otherwise, which can produce a "successful" build with missing binaries.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG KUBEBUILDER_VERSION=v4.4.0
+ARG CONTROLLER_GEN_VERSION=v0.16.5
+ARG KUSTOMIZE_VERSION=v5.4.3
+# setup-envtest is pinned to a COMMIT SHA, not a tag, on purpose. The 0.19 line
+# of controller-runtime/tools/setup-envtest has no semver tags at all; the only
+# ref is the `release-0.19` BRANCH. `go install ...@release-0.19` resolves to
+# whatever the branch head is at build time, so two people building a month
+# apart get different binaries with nothing in git having changed — and the
+# layer cache hides the divergence. A full SHA is reproducible (go records it
+# as a pseudo-version). Do not "helpfully" put the branch name back.
+# 5fe7bb3 == release-0.19 head as of 2026-08-26.
+ARG SETUP_ENVTEST_VERSION=5fe7bb3edc86c7eda8c8c455a9116453ee472371
+ARG ENVTEST_K8S_VERSION=1.31.0
+ARG KIND_VERSION=v0.25.0
+ARG HELM_VERSION=v3.16.3
+ARG GOVULNCHECK_VERSION=v1.3.0
+
+# Build-scoped only (ARG, not ENV): this image is meant to be `bash`ed into, and
+# a baked-in DEBIAN_FRONTEND=noninteractive would silently skip prompts for
+# anyone running apt-get in that interactive shell.
+ARG DEBIAN_FRONTEND=noninteractive
+
+ENV GOTOOLCHAIN=local \
+    GOFLAGS=-mod=mod \
+    GOBIN=/usr/local/bin
+
+# OS deps: docker CLI + compose v1 (matches host's docker-compose), build essentials
+# Note: docker.io brings only the client; the host socket is mounted at runtime so
+# containers created from inside are siblings on the host daemon, not nested.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl make git jq \
+        docker.io docker-compose \
+    && rm -rf /var/lib/apt/lists/*
+
+# kubebuilder v4 — pinned binary
+RUN ARCH="$(dpkg --print-architecture)" \
+    && curl -fsSL "https://github.com/kubernetes-sigs/kubebuilder/releases/download/${KUBEBUILDER_VERSION}/kubebuilder_linux_${ARCH}" \
+         -o /usr/local/bin/kubebuilder \
+    && chmod +x /usr/local/bin/kubebuilder \
+    && kubebuilder version
+
+# kind — local Kubernetes-in-Docker, used for the E2E layer above envtest.
+# Runs sibling docker containers via the mounted host socket; KUBECONFIG is
+# written under /workspace/.gocache/kube so it persists across wrapper invocations.
+RUN ARCH="$(dpkg --print-architecture)" \
+    && curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-${ARCH}" \
+         -o /usr/local/bin/kind \
+    && chmod +x /usr/local/bin/kind \
+    && kind version
+
+# helm 3 — pulls OCI charts and installs our own chart.
+RUN ARCH="$(dpkg --print-architecture)" \
+    && curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" \
+         | tar -xz -C /tmp \
+    && mv "/tmp/linux-${ARCH}/helm" /usr/local/bin/helm \
+    && rm -rf "/tmp/linux-${ARCH}" \
+    && chmod +x /usr/local/bin/helm \
+    && helm version --short
+
+# kubectl — sourced from kubebuilder's bundled assets or fetched separately.
+# kubebuilder v4 doesn't bundle kubectl; install it pinned to the envtest k8s version.
+RUN ARCH="$(dpkg --print-architecture)" \
+    && curl -fsSL "https://dl.k8s.io/release/v${ENVTEST_K8S_VERSION}/bin/linux/${ARCH}/kubectl" \
+         -o /usr/local/bin/kubectl \
+    && chmod +x /usr/local/bin/kubectl \
+    && kubectl version --client
+
+# controller-gen, kustomize, setup-envtest via go install -> /usr/local/bin (GOBIN)
+#
+# The module and build caches are BuildKit cache mounts, not image layers: none
+# of it is reachable at runtime anyway (scripts/dev.sh overrides GOPATH,
+# GOMODCACHE and GOCACHE to /workspace/.gocache), so baking it in only shipped
+# ~719MB of dead weight. As a cache mount it also survives across builds, so
+# bumping a tool version recompiles warm instead of from zero.
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install sigs.k8s.io/controller-tools/cmd/controller-gen@${CONTROLLER_GEN_VERSION} \
+    && go install sigs.k8s.io/kustomize/kustomize/v5@${KUSTOMIZE_VERSION} \
+    && go install sigs.k8s.io/controller-runtime/tools/setup-envtest@${SETUP_ENVTEST_VERSION}
+
+# govulncheck — installed straight under the image's pinned toolchain.
+# (Previously needed GOTOOLCHAIN=auto when the base image was Go 1.24
+# because v1.3.0 of golang.org/x/vuln requires Go >= 1.25. With the base
+# pinned to golang:1.26.4-bookworm the bootstrap toolchain already satisfies
+# the requirement, so the workaround is dropped.)
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
+
+# Pre-download envtest assets for k8s 1.31.0 so tests don't fetch them at test time.
+# Path is content-addressed under /opt/envtest; setup-envtest -p path resolves it.
+RUN mkdir -p /opt/envtest \
+    && setup-envtest use ${ENVTEST_K8S_VERSION} --bin-dir /opt/envtest
+
+ENV ENVTEST_K8S_VERSION=${ENVTEST_K8S_VERSION} \
+    ENVTEST_BIN_DIR=/opt/envtest
+
+# Workspace mount target — scripts/dev.sh sets cwd here.
+WORKDIR /workspace
+
+# Default: drop into bash. Wrapper script overrides with the actual command.
+CMD ["bash"]

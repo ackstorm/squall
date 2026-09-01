@@ -1,0 +1,65 @@
+# A static fixture for manual exploration (`make cluster-up`, `make
+# cluster-status`, kubectl by hand) — same shape as
+# config/samples/squall_v1alpha1_model.yaml, timers compressed so it doesn't
+# take the production defaults' 20m/10m to do anything observable.
+#
+# The Ginkgo suite (Task 11.3) does NOT depend on this object: it creates and
+# deletes its own Model so its timing assertions start from a clock the test
+# controls, rather than from whenever `cluster-hydrate` happened to run.
+apiVersion: squall.ackstorm.ai/v1alpha1
+kind: Model
+metadata:
+  name: e2e-fixture-model
+  namespace: squall
+spec:
+  engine: llama-cpp
+  features:
+    - TextGeneration
+  # dstack VALIDATES the image against its registry at apply time, so a
+  # made-up digest 400s the apply — which is why this could be fictional
+  # while the e2e ran against a fake that pulled nothing. Any CPU image
+  # serving HTTP will do: what this pod exists for is to be PROBED, so the
+  # controller can observe a real dstack readiness transition. OpenAI
+  # semantics come from model-mock, which the proxy reaches by template
+  # while D25 is open. nginx-unprivileged listens on 8080, which is what
+  # enginePort(llamacpp) derives — that is why the engine is llamacpp.
+  image: ghcr.io/nginxinc/nginx-unprivileged@sha256:7051ba7b4b6575ac1b2ac7f14e58afa4646ae02bda31fb04225a312d08f7bef1
+  args: []
+  env: {}
+  # Sized for the kind backend, and every field is set on purpose: an
+  # omitted field is a dstack DEFAULT, not "unconstrained" (2 cores, 8GB,
+  # 100GB disk, gpu count min 0). The 100GB default is what made this run
+  # die with failed_to_start_due_to_no_capacity before D55 was fixed.
+  resources:
+    cpu:
+      count: "1.."
+    memory: 512MB..
+    disk: 10GB..
+    gpu:
+      # Explicitly none: kind has no GPU, and dstack's own default is
+      # already a minimum of 0, so this states the intent rather than
+      # inheriting it by accident.
+      count: "0"
+  # The engine default for llama-cpp is /health, which the nginx stand-in
+  # does not serve — so the probe never succeeded and the model never left
+  # Recreating despite a healthy pod. This is exactly why the path is a CR
+  # field and not a constant in the binary.
+  probe:
+    path: /
+    interval: 2s
+    readyAfter: 2
+  placement:
+    # squall now actually SENDS this (D55). It must name the backend the
+    # e2e server really has, or dstack correctly reports no offers — which
+    # is the passthrough working, not a bug.
+    backends: [kubernetes]
+    regions: []
+    maxPricePerHour: "0.80" # unquoted floats fail CRD validation (anyOf: int|string); quoted per resource.Quantity
+  minReplicas: 0
+  holdTimeout: 8s
+  scaleDownDelaySeconds: 2
+  fleet:
+    idleDuration: 6s
+  drainTimeout: 10s
+  provisioningTimeout: 5m
+  maxLifetime: 168h

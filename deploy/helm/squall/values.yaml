@@ -1,0 +1,480 @@
+# Default values for the squall chart. See deploy/helm/squall/CLAUDE.md for
+# the chart's structure and how values map onto the two binaries' env vars.
+
+# The namespace all controller/proxy resources are created in.
+#
+# The chart does NOT template this namespace, deliberately. Helm writes the
+# release secret into the release namespace BEFORE it applies any manifest, so
+# a chart that templates its own release namespace can never install onto a
+# fresh cluster — it fails with `namespaces "<ns>" not found`. Install with
+# `helm upgrade --install --namespace <ns> --create-namespace`.
+#
+# dstack.runsNamespace IS templated, because it is not the release namespace.
+namespace: squall-system
+
+# Pull secrets for squall's own images (controller and proxy). GHCR packages
+# inherit the repository's visibility, so a private repository publishes
+# private images and a stock install cannot pull them without a secret here.
+# Names only — the Secret itself is not templated, because a chart that
+# renders a registry credential puts it in `helm get values` and every GitOps
+# diff (same reasoning as squall.dstackTokenEnv in _helpers.tpl).
+#   imagePullSecrets:
+#     - name: ghcr-squall
+imagePullSecrets: []
+
+controller:
+  serviceAccountName: controller-manager
+  replicas: 1
+  leaderElect: true
+  healthProbeBindAddress: ":8081"
+  image:
+    repository: ghcr.io/ackstorm/squall-controller
+    # Empty follows .Chart.AppVersion. Set it only to pin a build that is not
+    # the chart's own release (the e2e values do exactly that, with :e2e).
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  env:
+    # Required: squall-controller exits immediately if this is empty
+    # (cmd/controller/main.go). The dstack server's base URL, e.g.
+    # http://<release>-dstack.<namespace>.svc.cluster.local:3000.
+    dstackURL: ""
+    # dstack admin/project token. NEVER commit a real token in a values file
+    # — this is plaintext in the Deployment spec. Use a values override kept
+    # out of Git, or --set, for anything but a throwaway e2e token.
+    #
+    # LIVE-4: also read by the proxy Deployment (SQUALL_DSTACK_TOKEN,
+    # templates/proxy-deployment.yaml) to authenticate forwarded requests to
+    # dstack's own service proxy, which demands this same project's token by
+    # default. One dstack project, one token — not duplicated under
+    # proxy.env.
+    dstackToken: ""
+    # PREFERRED over dstackToken: name an existing Secret instead of putting
+    # the credential in the Deployment object, where `get deployments` — a
+    # wider audience than `get secrets` — and every `helm get values` or
+    # GitOps diff would expose it. Used by BOTH deployments (the controller
+    # talks to dstack's REST API, the proxy to its service proxy, LIVE-4).
+    #
+    #   kubectl create secret generic squall-dstack-token \
+    #     -n squall-system --from-literal=token=...
+    #
+    # Set name to switch; dstackToken above is then ignored. It remains the
+    # fallback for the e2e fixtures, whose token is a fixed, obviously-fake
+    # string. This does NOT address dstack storing the same credential
+    # unencrypted (D47) or handing it back in cleartext (D85).
+    dstackTokenSecret:
+      name: ""
+      key: token
+    # The proxy Service squall-controller watches EndpointSlices on for §6's idle
+    # evidence. Both empty is a safe default: it keeps sleep unreachable
+    # rather than misreading an unwired proxy as idle.
+    proxyServiceNamespace: ""
+    proxyServiceName: ""
+    # time.Duration string (e.g. "15s"). Empty defers to the controller's own
+    # default (15s).
+    idleRequeueInterval: ""
+
+proxy:
+  serviceAccountName: proxy
+  replicas: 2
+  # 30s was Kubernetes' unset default, never a decision. Measured
+  # generations run 155-330s (5-10x longer), so let srv.Shutdown finish on
+  # the same order as the representative 20m Model holdTimeout.
+  terminationGracePeriodSeconds: 1200
+  image:
+    repository: ghcr.io/ackstorm/squall-proxy
+    # Empty follows .Chart.AppVersion — see controller.image.tag.
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  env:
+    # Namespace squall-proxy watches Models in. Empty watches every
+    # namespace (client-go's dynamic informer treats "" as cluster-wide),
+    # and the demand patch resolves each Model's own namespace off the
+    # informer cache (D103 — "" used to make the patch target a
+    # cluster-scoped URL for a namespaced CRD, so every patch 404'd
+    # silently and no Model could wake in a stock install). Set it only to
+    # RESTRICT the proxy to one namespace.
+    namespace: ""
+    # time.Duration strings. Empty defers to cmd/proxy's own defaults
+    # (demandCooldown: 5s).
+    demandCooldown: ""
+    # demandRefreshInterval is now only a CEILING (LIVE-3, corrected), not
+    # the refresh cadence itself: the proxy derives the actual per-hold
+    # interval from EACH Model's own spec.scaleDownDelaySeconds
+    # (internal/proxy.refreshIntervalFor — 1/10 of it, floored at 500ms so a
+    # short TTL cannot spin the API server, clamped to this ceiling so a
+    # long TTL still refreshes often enough to be safe). One proxy serves
+    # every Model, so a single flat interval was wrong by construction: it
+    # could only be tuned for one Model's TTL at a time, and a real 300s
+    # Model once inherited a value tuned for a 2s test fixture, 600x too
+    # fast. Leave this empty for cmd/proxy's own default (30s, a wide margin
+    # over the representative 300s scaleDownDelaySeconds in config/samples);
+    # only raise it to bound staleness further for models with very long
+    # TTLs.
+    demandRefreshInterval: ""
+    # int. Empty (0) means unbounded.
+    maxPendingPerModel: ""
+    # slog level: debug | info | warn | error. D87 records one line per
+    # request; an ordinary forward is Debug so a busy proxy stays readable,
+    # while a HELD or failed request logs at Info and is visible here by
+    # default. Raise to debug when diagnosing the data path — it is one line
+    # per request, never a body or a header (those carry user prompts and the
+    # dstack bearer token). An unparseable value keeps info rather than
+    # failing startup.
+    logLevel: info
+    # D25: override for tests only. squall-proxy resolves its forward
+    # target from status.serviceURL (SQUALL_DSTACK_URL, derived from
+    # controller.env.dstackURL above) by default. Set this Go text/template
+    # forwarding target, e.g.
+    # "http://%s.squall-system.svc.cluster.local:8080" (%s is the Model
+    # name), only for fixtures — like the e2e model-mock — that have no
+    # dstack server to resolve a status.serviceURL against.
+    backendURLTemplate: ""
+    # Empty defers to cmd/proxy's own default (":8080"). Changing this without
+    # also changing the container's hardcoded containerPort 8080 breaks the
+    # Service, which targets the "http" port by name, not this value.
+    addr: ""
+
+# A real dstack 0.21.2 server, running the Kubernetes backend pointed at the
+# very cluster it runs in. Every default below is a MEASURED fact from
+# docs/references/dstack-real-api.md §9 (dstack 0.21.2 on kind) — re-verify
+# against that doc before changing any of them.
+dstack:
+  # Name of an EXISTING Kubernetes Secret in this namespace holding cloud
+  # credentials. Every key becomes an environment variable, and any ${KEY}
+  # placeholder in dstack.backends below is substituted from it at Pod
+  # startup, before the dstack server reads its config.
+  #
+  #   kubectl create secret generic squall-cloud-creds \
+  #     -n squall-system --from-literal=VAST_API_KEY=...
+  #
+  # This keeps the credential out of values.yaml, out of Git, and out of the
+  # rendered chart. An unresolved placeholder CRASHES the Pod rather than
+  # rendering an empty credential.
+  credentialsSecretName: ""
+
+  # Which clouds dstack may provision on.
+  #
+  # EMPTY (the default) = the in-cluster Kubernetes backend, which is what
+  # the e2e uses: no GPU, no bill. Set this to run on real hardware.
+  #
+  # The list is passed through to dstack's server/config.yml VERBATIM — it
+  # is dstack's own schema, not a squall one, so anything dstack 0.21.2
+  # accepts works here and nothing needs a chart change.
+  #
+  # Use ${VAR} placeholders and credentialsSecretName above rather than
+  # inlining a credential here. dstack itself does NOT interpolate env vars
+  # in server/config.yml, so the chart renders the substitution in an init
+  # container before the server starts. See ledger D47 — dstack's DB stores
+  # credentials unencrypted at rest unless `encryption:` is configured, so
+  # keeping them out of the values file is necessary but not sufficient.
+  #
+  # Vast.ai:
+  #   backends:
+  #     - type: vastai
+  #       creds:
+  #         type: api_key
+  #         api_key: ${VAST_API_KEY}   # from credentialsSecretName
+  #       # Optional. Omit for all regions. These are Vast's own location
+  #       # strings — there is no "europe" grouping, dstack matches them
+  #       # exactly (server/services/offers.py).
+  #       regions: [ES, IT, NL]
+  #       # Optional. LEFT OMITTED here deliberately — do not uncomment this
+  #       # to `false` without measuring first. dstack's own default is
+  #       # `true` (core/backends/vastai/models.py: VASTAI_COMMUNITY_CLOUD_
+  #       # DEFAULT), i.e. Community Cloud (individual operators) offers are
+  #       # INCLUDED alongside Server Cloud (datacenter-grade hosts) unless
+  #       # this is set. §12.3 already classifies every Vast.ai offer —
+  #       # Server Cloud and Community Cloud alike — as "internal,
+  #       # non-regulated workloads only" (an anonymous rented host is not a
+  #       # GDPR processor regardless of which pool it came from), so
+  #       # `community_cloud: false` does not change workload eligibility;
+  #       # it only removes the individual-operator pool from consideration
+  #       # for reliability/trust reasons, which is a real but SEPARATE
+  #       # tradeoff from §12.3. D60 measured the FILTERED (verified,
+  #       # reliability>=0.9, ...) EU catalogue as already thin — restricting
+  #       # further to Server Cloud only, in the same already-thin EU
+  #       # regions, is un-measured and could plausibly leave too few offers
+  #       # to provision at all. Set explicitly to `false` only after
+  #       # confirming offer counts for your actual region/GPU combination.
+  #       # community_cloud: false
+  #
+  # AWS:
+  #   backends:
+  #     - type: aws
+  #       creds:
+  #         type: access_key
+  #         access_key: ${AWS_ACCESS_KEY_ID}
+  #         secret_key: ${AWS_SECRET_ACCESS_KEY}
+  #       regions: [eu-west-1, eu-central-1]
+  #   # For IRSA / instance profiles instead of a static key, use
+  #   # `creds: {type: default}` and give the dstack ServiceAccount the role.
+  #
+  # DigitalOcean:
+  #   backends:
+  #     - type: digitalocean
+  #       creds:
+  #         type: api_key
+  #         api_key: ${DO_TOKEN}
+  #
+  # A Model only provisions on a backend named in BOTH this list and its own
+  # spec.placement.backends (§12.3's compliance allowlist).
+  backends: []
+
+  runsNamespace: squall-runs
+  image:
+    repository: dstackai/dstack
+    # PINNED. Every measured fact this chart's dstack wiring relies on (the
+    # required fleet, the proxy_jump requirement, the RBAC verb set) was
+    # measured against exactly this version. Re-measure before bumping.
+    tag: "0.21.2"
+    pullPolicy: IfNotPresent
+  # Required. Becomes the dstack "admin" user's token on first boot only
+  # (DSTACK_SERVER_ADMIN_TOKEN — server/services/users.py); a later change has
+  # no effect on an already-bootstrapped server volume. NEVER a real token in
+  # a values file — for e2e this must be a fixed, obviously-fake string (e.g.
+  # "e2e-local-token"), never one that could pass for a real credential.
+  adminToken: ""
+  projectName: main
+  # Measured: the server (Python/FastAPI/SQLAlchemy, migrations + background
+  # schedulers) settles well above the Go binaries' footprint; 512Mi OOM-killed
+  # it within a minute of a clean start.
+  resources:
+    limits:
+      cpu: "1"
+      memory: 1536Mi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  storage:
+    size: 1Gi
+    # Empty uses the cluster's default StorageClass.
+    storageClassName: ""
+
+  # database: dstack's control-plane DB. Same doctrine as ../ach's chart —
+  # NO embedded database subchart. Point this at an externally-managed
+  # Postgres (e.g. bitnami/postgresql alongside this release) in production.
+  #
+  # LEAVE THIS BLOCK EMPTY and dstack falls back to its own default,
+  # `sqlite+aiosqlite:///<data_dir>/sqlite.db` on the PVC above (server/
+  # settings.py's get_database_url()). That keeps e2e and local installs
+  # working exactly as before this field existed.
+  #
+  # SQLite IS DEVELOPMENT ONLY — this is not a performance opinion, it is a
+  # correctness one. Measured inside a running dstackai/dstack:0.21.2
+  # container, server/services/locking.py's advisory_lock_ctx docstring
+  # reads: "Acquire Postgres advisory lock on `resource`. No-op on SQLite."
+  # dstack's cross-process resource locking is DISABLED on SQLite — it
+  # silently degrades to an in-process InMemoryResourceLocker. On top of
+  # that, a load test on 2026-08-28 hit dstack's SQLAlchemy pool ceiling at
+  # ~19 concurrent requests well before the GPU itself became the
+  # bottleneck:
+  #   sqlalchemy.exc.TimeoutError: QueuePool limit of size 20 overflow 20
+  #   reached, connection timed out, timeout 30.00
+  database:
+    # Plain (non-secret) connection coordinates. Used ONLY for the
+    # wait-for-postgres init container below and never for the actual
+    # connection — the credential-bearing URL lives solely in
+    # existingSecret. Leave empty for SQLite (no wait, no DSTACK_DATABASE_URL
+    # env var rendered at all).
+    host: ""
+    port: 5432
+    # existingSecret: {name, key} of a Secret ALREADY PRESENT in this
+    # namespace, whose value at `key` is the full SQLAlchemy URL dstack
+    # wants in DSTACK_DATABASE_URL, e.g.
+    #   postgresql+asyncpg://user:pass@host:5432/dstack
+    # (asyncpg 0.31.0 is already installed in dstackai/dstack:0.21.2 — no
+    # image change needed). The chart NEVER accepts a password here: not in
+    # values.yaml, not in a ConfigMap, not as a literal on the Deployment.
+    # Create the Secret out-of-band, e.g.:
+    #   kubectl create secret generic squall-dstack-db -n squall-system \
+    #     --from-literal=database-url='postgresql+asyncpg://...'
+    existingSecret:
+      name: ""
+      key: "database-url"
+    # DSTACK_DB_POOL_SIZE / DSTACK_DB_MAX_OVERFLOW. Only rendered when
+    # existingSecret.name is set: SQLite's aiosqlite pool has no meaningful
+    # equivalent to tune.
+    #
+    # This is NOT a query-throughput knob — it is a CONNECTION-PINNING budget.
+    # Read inside a running dstackai/dstack:0.21.2 container,
+    # server/services/proxy/deps.py's ServerProxyDependencyInjector.get_repo
+    # and .get_auth_provider are both FastAPI `yield` dependencies, each
+    # wrapping its own get_session_ctx(). FastAPI tears a yield-dependency
+    # down only AFTER the response completes, and squall's responses are
+    # long-lived streaming LLM generations (~43s in the load test below) — so
+    # EVERY in-flight request pins 2 DB connections for its full duration,
+    # idle for almost all of it, whenever `configuration.auth` is true
+    # (dstack's own default; nothing in this chart's dstack-config-secret.yaml
+    # overrides it). That gives:
+    #
+    #   max_concurrent_generations ~= (poolSize + maxOverflow) / 2
+    #
+    # This matches the measurement almost exactly: dstack's own 20/20
+    # defaults give (20+20)/2 = 20, and the 2026-08-28 load test saw 18-19
+    # requests succeed at concurrency 24 AND 32, with the rest failing on
+    # "QueuePool limit of size 20 overflow 20 reached, connection timed out,
+    # timeout 30.00" — i.e. the ceiling above is a connection budget, not a
+    # throughput one, and adding GPUs does not move it.
+    #
+    # 40/40 doubles dstack's own defaults (no spec mandates a concurrency
+    # target — this is a judgment call, not a §-cited requirement), giving an
+    # implied ceiling of (40+40)/2 = 40 concurrent streaming generations,
+    # ~2x the measured ~19. Do NOT copy the production GitOps config's
+    # 10/0 verbatim: that config runs dstack for lighter, non-streaming
+    # control-plane traffic, and its own formula gives (10+0)/2 = 5 — worse
+    # than dstack's own default, for a workload squall does not have.
+    #
+    # Checked against Postgres, not assumed: bitnami/postgresql (chart
+    # 15.5.38, `helm show values` plus a full untarred template-tree grep)
+    # exposes no max_connections override at all — the value comes purely
+    # from the image's baked-in postgresql.conf. Queried live against
+    # bitnamilegacy/postgresql:16.6.0-debian-12-r2 (the exact image the
+    # production GitOps config pins): `max_connections` defaults to 100.
+    # server/background/{pipeline_tasks,scheduled_tasks}/*.py (26 files) also
+    # call get_session_ctx() against the SAME engine (server/db.py has a
+    # single create_async_engine call) — those sessions are short-lived, not
+    # pinned for a generation, but they share this same connection budget.
+    #
+    # THE FORMULA IS NOW CONFIRMED, not inferred. Measured 2026-08-28 under a
+    # real benchmark against a live GPU:
+    #
+    #   16 concurrent -> pg_stat_activity flat at 41  (2x16=32 <= poolSize 40,
+    #                                                  so the pool reuses
+    #                                                  already-open connections
+    #                                                  and the count does not
+    #                                                  move — this is why an
+    #                                                  earlier, lighter test
+    #                                                  appeared to REFUTE the
+    #                                                  2-per-request model)
+    #   44 in flight  -> pg_stat_activity 81 = 40+40+1, EXHAUSTED, with vLLM
+    #                    reporting 12 requests queued while
+    #                    num_requests_waiting_by_reason{capacity} stayed 0 and
+    #                    KV cache sat at 15.6% — the GPU was idle-ish and the
+    #                    queue was this connection budget.
+    #
+    # 100/100 therefore implies a ceiling of (100+100)/2 = 100 concurrent
+    # streaming generations. It REQUIRES max_connections >= 200 + headroom:
+    # test/e2e/cluster/02-postgres/postgres_deployment.yaml now starts
+    # Postgres with max_connections=250 (and 1Gi, since backends measured
+    # ~0.7MB each). An external production Postgres must be raised to match —
+    # raising poolSize alone against the default 100 turns a queue into
+    # outright connection refusals, which fails far worse.
+    #
+    # This coupling is inherent to routing the data path through dstack's own
+    # API rather than a dedicated gateway: a request pins 2 connections for
+    # its entire streamed lifetime no matter how large the pool is, so every
+    # increase here buys concurrency linearly and buys nothing else. The
+    # actual fix is to take dstack's server out of the data path — see
+    # decisions-and-open-items.md's data-path decision. Do not "tidy" these
+    # back down to dstack's 20/20 or to the production config's 10/0 without
+    # re-deriving this arithmetic.
+    poolSize: 100
+    maxOverflow: 100
+  # Seconds dstack's service proxy waits for a replica's response HEADERS
+  # (DSTACK_SERVICE_CLIENT_TIMEOUT). dstack's own default is 60, copied from
+  # nginx, and it is far too low for LLM serving: a NON-streaming completion
+  # sends no headers until the whole generation is done, so generation plus
+  # queueing must fit inside it. Measured externally 2026-08-28 on this stack —
+  # max_tokens 3000 returned 200 at 59.9s, 4000 returned 504 at 60.02s, and
+  # concurrency made it worse because queueing counts too.
+  #
+  # NOT settable per request. dstack reads the env var ONCE at import into a
+  # module-level constant (proxy/lib/services/service_connection.py:28) and
+  # applies it to every service on the server, so a client cannot ask for a
+  # longer budget on a single long generation. That is why the default here is
+  # generous rather than tight: the only alternative to a high value is a
+  # failed request.
+  #
+  # 600 allows ~30k output tokens at the ~50 tok/s measured for a 27B model on
+  # one RTXPRO6000WS, and leaves room for queueing, which counts against the
+  # same budget. The cost of a high value is slower detection of a genuinely
+  # dead upstream.
+  #
+  # Streaming requests never needed any of this: the timeout is applied
+  # per-read, not per-request, so chunks arriving every few milliseconds never
+  # approach it.
+  #
+  # Models served over squall's own SSH tunnel bypass dstack's proxy entirely
+  # and are not subject to it at all.
+  serviceClientTimeoutSeconds: 600
+
+  kubernetes:
+    # Name of the synthetic kubeconfig context the init container generates
+    # in-Pod. Arbitrary — never compared against any host kubeconfig.
+    contextName: incluster
+    proxyJump:
+      # Required. kind nodes have no ExternalIP and dstack refuses to
+      # provision without one; hack/cluster.sh resolves the kind node's
+      # InternalIP and sets this. See §3 of dstack-real-api.md.
+      hostname: ""
+      # Pinned inside kind's NodePort range (measured working value).
+      port: 32000
+  # The Kubernetes-backend fleet is NOT optional: on that backend, a run
+  # dies "failed_to_start_due_to_no_capacity" without one, and its `nodes`
+  # target MUST be 0 (KubernetesCompute does not support
+  # ComputeWithCreateInstanceSupport, so anything else gets excluded with
+  # NO_OFFERS). See §4 of dstack-real-api.md.
+  #
+  # LIVE-7 (2026-08-28, ledger D83): a missing fleet for any OTHER backend is
+  # no longer a silent trap — squall's own EnsureFleet
+  # (internal/dstack/client.go, driven from internal/controller/squall/
+  # preflight.go on every wake) auto-creates a "squall-auto-<backend>" fleet
+  # the first time a Model names a backend with none, with a fixed resource
+  # floor and unbounded nodes ("0.."). dstack itself never does this on the
+  # run path (docs/references/dstack-real-api.md §9.8) — EnsureFleet is what
+  # closes the gap. Declaring a fleet here remains a supported, GitOps-
+  # visible override for when you want fixed resources/region/warm nodes
+  # pinned ahead of time rather than EnsureFleet's floor defaults; just keep
+  # its `name` off the `squall-auto-` prefix so the two never collide.
+  #
+  # Plural since LIVE-7 (was a single `fleet:` object). If a values file
+  # still sets the singular `fleet:` key, the chart FAILS the render with a
+  # migration message rather than silently dropping it.
+  fleets:
+    - name: kind-fleet
+      # Which backends the fleet may draw instances from. Must intersect
+      # dstack.backends. On the Kubernetes backend `nodes` MUST stay "0..2"
+      # (see above); on VM backends set it to the node count you want warm.
+      backends: [kubernetes]
+      nodes: "0..2"
+      resources:
+        cpu: "1.."
+        memory: "512MB.."
+        disk: "10GB.."
+    # Example: the vastai fleet actually validated by the 2026-08-28 live
+    # GPU run (LIVE-7's own postmortem, D83). Uncomment and adjust
+    # name/resources for your own run. "0.." (unbounded, min 0) is
+    # deliberately cold-start-only — dstack pre-creates nothing for a fleet
+    # with nodes.min 0, so this costs nothing until a run actually needs it
+    # (see D58).
+    # - name: vast-live
+    #   backends: [vastai]
+    #   nodes: "0.."
+    #   resources:
+    #     cpu: "8.."
+    #     memory: "32GB.."
+    #     disk: "100GB.."
+    #   # GPU selection is not a fleet-level field this chart renders today
+    #   # (dstack-config-secret.yaml's fleet template emits only cpu/memory/
+    #   # disk) — it belongs on the Model's own spec.resources.gpu instead,
+    #   # which any run this fleet admits already carries.
+  # Bounded wait for the post-install/post-upgrade fleet Job: the server's
+  # own readiness and EACH fleet reaching `active` are polled at most
+  # waitAttempts times, waitIntervalSeconds apart, then the Job fails
+  # loudly — naming which fleet did not come up — rather than hanging.
+  waitAttempts: 30
+  waitIntervalSeconds: 10

@@ -1,0 +1,30 @@
+type: fleet
+name: squall-vast-fleet
+
+# Same 0..1 shape as the AWS fleet: instances appear only when a run needs one.
+# Vast has no CPU-only offers through dstack (gpu=0.. returns nothing), so the
+# cheapest thing available is a small consumer GPU - which is still cheaper than
+# the c7i.large this PoC used on AWS.
+nodes: 0..1
+
+# Fleets default to 3d, which on a marketplace GPU is the difference between
+# cents and a real bill. The replica flipping to 0 frees the job, never the host.
+idle_duration: 5m
+
+backends: [vastai]
+
+resources:
+  gpu: 8GB..24GB
+  cpu: 2..
+  memory: 4GB..
+
+# Hard ceiling per hour. Nothing here should ever approach it.
+max_price: 0.30
+
+backend_options:
+  # Vast orders by composite `score` by default, not by price, so a cost-driven
+  # pool has to say so explicitly. Upstream warns cheap offers are less reliable,
+  # hence the raised reliability floor to compensate.
+  - type: vastai
+    offer_order: price
+    min_reliability: 0.95

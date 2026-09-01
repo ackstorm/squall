@@ -1,0 +1,29 @@
+# Build artifacts
+bin/
+dist/
+testbin/
+
+# Containerized toolchain cache (scripts/dev.sh).
+# Load-bearing for secrets, not just for noise: dev.sh sets
+# KUBECONFIG=/workspace/.gocache/kube/config, so kind cluster ADMIN
+# credentials land inside the repo tree. This line is the only thing
+# standing between them and a commit. Do not narrow it.
+.gocache/
+
+# Coverage / logs
+*.out
+*.log
+
+# Local editor / agent state
+**/.claude/repo_cost.json
+
+# Secrets — never commit a real .env.
+.env
+.env.*
+
+# Git worktrees for isolated plan execution
+.worktrees/
+
+# Agent scratch: SDD ledgers, task briefs, review packages (superpowers).
+.superpowers/
+.scratch/

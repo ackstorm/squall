@@ -1,0 +1,4 @@
+.gocache/
+.git/
+bin/
+dist/

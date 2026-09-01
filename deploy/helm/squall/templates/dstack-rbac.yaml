@@ -1,0 +1,121 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dstack-backend
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: dstack
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+---
+# Cluster-scoped RBAC dstack's Kubernetes backend needs. Narrowed from
+# cluster-admin per docs/references/dstack-real-api.md §5 (measured — proved
+# sufficient by watching a real wake provision a pod, not by reading source).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: squall-dstack-backend-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - create
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: squall-dstack-backend-rolebinding
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: squall-dstack-backend-role
+subjects:
+- kind: ServiceAccount
+  name: dstack-backend
+  namespace: {{ .Values.namespace }}
+---
+# Namespaced RBAC, scoped to the runs namespace only: what dstack needs to
+# create and tear down job pods and their supporting objects.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: squall-dstack-runs-role
+  namespace: {{ .Values.dstack.runsNamespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: dstack
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - watch
+  - create
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - services
+  - secrets
+  - persistentvolumeclaims
+  verbs:
+  - get
+  - watch
+  - create
+  - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: squall-dstack-runs-rolebinding
+  namespace: {{ .Values.dstack.runsNamespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: dstack
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: squall-dstack-runs-role
+subjects:
+- kind: ServiceAccount
+  name: dstack-backend
+  namespace: {{ .Values.namespace }}
+---
+# A long-lived token for this ServiceAccount, used to build the kubeconfig
+# dstack's Kubernetes backend authenticates with (dstack has no in-cluster
+# config support — core/backends/kubernetes/utils.py — so it always needs an
+# explicit kubeconfig, even running as a Pod in the same cluster it manages).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dstack-backend-token
+  namespace: {{ .Values.namespace }}
+  annotations:
+    kubernetes.io/service-account.name: dstack-backend
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: dstack
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+type: kubernetes.io/service-account-token

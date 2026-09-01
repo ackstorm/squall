@@ -1,0 +1,22 @@
+# Service name `squall-postgres` MUST match the host embedded in
+# postgres_secret.yaml's database-url and deploy/helm/squall's
+# dstack.database.host (test/e2e/cluster/helm-values.yaml).
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: squall-postgres
+  labels:
+    app: postgres
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: database
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP

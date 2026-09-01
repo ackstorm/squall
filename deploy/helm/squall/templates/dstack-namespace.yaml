@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.dstack.runsNamespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: dstack-runs
+    app.kubernetes.io/managed-by: {{ .Release.Service }}

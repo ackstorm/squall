@@ -1,0 +1,36 @@
+# cmd/model-mock: the minimal OpenAI-compatible engine double standing in
+# for vLLM/Ollama behind a Ready Model, so squall-proxy's forwarding path
+# (internal/proxy/backend.go's TemplateBackend) is proven against a real
+# HTTP hop. One Deployment, fronted by a Service per Model name (see
+# model-mock-services.yaml) so TemplateBackend's %s-model-name substitution
+# resolves for real rather than being bypassed with a constant URL.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-mock
+  namespace: squall
+  labels:
+    app.kubernetes.io/name: model-mock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: model-mock
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: model-mock
+    spec:
+      containers:
+      - name: model-mock
+        image: model-mock:e2e
+        imagePullPolicy: Never
+        ports:
+        - name: http
+          containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 1
+          periodSeconds: 5

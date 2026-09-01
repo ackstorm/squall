@@ -1,0 +1,110 @@
+name: devtools-image
+
+# Builds and pushes the pre-baked devtools image consumed by ci.yml jobs.
+# Image is content-addressed by sha256(Dockerfile.devtools) — the same hash
+# computed by .github/actions/setup-devtools. Subsequent CI jobs pull the
+# tagged image instead of rebuilding from scratch (~2-3 min saved per job,
+# x 5 jobs per PR).
+#
+# Triggers:
+#   - push:main when Dockerfile.devtools or this workflow changes
+#   - pull_request when those paths change (builds + pushes so the PR's
+#     CI run can consume the new image)
+#   - workflow_dispatch for manual rebuilds (first push to seed `:latest`,
+#     forced rebuild via UI, etc.)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile.devtools'
+      - '.github/workflows/devtools-image.yml'
+      - '.github/actions/setup-devtools/**'
+  pull_request:
+    paths:
+      - 'Dockerfile.devtools'
+      - '.github/workflows/devtools-image.yml'
+      - '.github/actions/setup-devtools/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: devtools-image-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-push:
+    name: Build + push devtools image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6  # v4.3.1
+
+      # Two forms of the same hash, and both are load-bearing:
+      #   `hash`     — 12 chars, the image TAG (readable, collision-free enough).
+      #   `full_sha` — the whole digest, stamped as the `squall.dockerfile.sha`
+      #                LABEL. scripts/dev.sh compares that label against its own
+      #                `sha256sum Dockerfile.devtools` to decide whether to
+      #                rebuild. A pulled-and-retagged image whose label is
+      #                missing or stale makes dev.sh rebuild from scratch in
+      #                every job — silently defeating this entire workflow.
+      - name: Compute image reference
+        id: ref
+        run: |
+          FULL_SHA=$(sha256sum Dockerfile.devtools | cut -d' ' -f1)
+          HASH=${FULL_SHA:0:12}
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "full_sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/$OWNER/squall-devtools:$HASH" >> "$GITHUB_OUTPUT"
+          echo "latest=ghcr.io/$OWNER/squall-devtools:latest" >> "$GITHUB_OUTPUT"
+          echo "buildcache=ghcr.io/$OWNER/squall-devtools:buildcache" >> "$GITHUB_OUTPUT"
+
+      # buildx is BuildKit by definition. This matters more than it looks:
+      # Dockerfile.devtools uses `RUN --mount=type=cache,...`, which is a HARD
+      # BUILD ERROR under the legacy builder (DOCKER_BUILDKIT=0), not a silent
+      # no-op. Never disable BuildKit anywhere in this repo's CI.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push devtools image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.devtools
+          push: true
+          # Must match the label scripts/dev.sh stamps and compares.
+          labels: |
+            squall.dockerfile.sha=${{ steps.ref.outputs.full_sha }}
+          tags: |
+            ${{ steps.ref.outputs.image }}
+            ${{ github.ref == 'refs/heads/main' && steps.ref.outputs.latest || '' }}
+          cache-from: type=registry,ref=${{ steps.ref.outputs.buildcache }}
+          cache-to: type=registry,ref=${{ steps.ref.outputs.buildcache }},mode=max
+          # provenance:false keeps the pushed artifact a plain image manifest
+          # rather than an attestation index, so a plain `docker pull` + `docker
+          # tag` in setup-devtools yields an image whose Config.Labels dev.sh
+          # can read back.
+          provenance: false
+
+      - name: Summary
+        run: |
+          {
+            echo "### Devtools image"
+            echo ""
+            echo "- Hash: \`${{ steps.ref.outputs.hash }}\`"
+            echo "- Pushed: \`${{ steps.ref.outputs.image }}\`"
+            if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+              echo "- Also tagged: \`${{ steps.ref.outputs.latest }}\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,215 @@
+# The spec's target model (F29), as a runnable CR.
+#
+# VERIFIED END TO END on 2026-08-27: this exact file provisioned an
+# RTXPRO6000WS (96GB) on Vast.ai in cz-czechia at $2.003/h, served chat,
+# streaming and vision through squall-proxy, then slept and released the
+# instance on its own. Every number below is measured, not estimated.
+#
+#   kubectl create namespace squall
+#   kubectl apply -f config/samples/squall_v1alpha1_model.yaml
+#   # then just ask for it — the first request is what wakes it:
+#   curl -X POST http://<squall-proxy>/v1/chat/completions \
+#     -H 'Content-Type: application/json' \
+#     -d '{"model":"qwen3-8-27b","messages":[{"role":"user","content":"hola"}]}'
+#
+# The `model` field in that body MUST be the CR's name: squall-proxy resolves
+# the Model from it, which is why --served-model-name below repeats it.
+#
+# Expect the first wake to take 10-15 minutes (image pull, then 28.8 GiB of
+# weights). The proxy holds the request for spec.holdTimeout and answers the
+# wait contract if the deadline passes — retry, the download continues.
+#
+# Requires a dstack server with the `vastai` backend CONFIGURED and a fleet
+# that allows it. An unconfigured backend is indistinguishable from an empty
+# market: get_plan simply returns zero offers, with no error (D58, D67).
+#
+# Engine is vLLM, not Ollama. That is not a preference: with Ollama nothing
+# in the CR can say WHICH model to serve — `image` is the engine image and
+# Ollama pulls weights at runtime — so an Ollama CR written this way starts
+# an empty server (ledger D62, still open). vLLM takes the model as a flag,
+# which spec.args carries, so this shape actually launches something.
+apiVersion: squall.ackstorm.ai/v1alpha1
+kind: Model
+metadata:
+  name: qwen3-8-27b
+  namespace: squall
+spec:
+  engine: vllm
+  # vLLM v0.28.0, linux/amd64, resolved 2026-08-27 (§8, §9 pinned digest).
+  # Newest release, not a floor: the architecture below is registered as far
+  # back as v0.26.0. v0.28.0 is chosen because it carries v0.27.0's fused
+  # CUDA kernel for "Qwen3.5 GDN" (Gated DeltaNet, this model's attention)
+  # plus its own "Qwen3.5 fixes for text-only checkpoints".
+  #
+  # MULTIMODAL SUPPORT: VERIFIED 2026-08-27, against source rather than
+  # release notes. The checkpoint's config.json declares
+  #   "architectures": ["Qwen3_5ForConditionalGeneration"], language_model_only: false
+  # and that exact name is registered in vLLM's _MULTIMODAL_MODELS
+  # (model_executor/models/registry.py:592 at v0.28.0). The release notes
+  # only ever say "text-only", which is misleading — the registry is the
+  # authority and it lists the vision path.
+  image: vllm/vllm-openai@sha256:2286e8533ca8b6bc777594bae30524f1426ba46ca21797524e06df6a94b06635
+
+  # spec.args reaches dstack as `commands`, which REPLACE the image
+  # entrypoint rather than appending to it. Correct for vLLM, whose
+  # entrypoint is the server and whose args are flags to it.
+  # WHICH weights to serve. Qwen ship an OFFICIAL FP8 checkpoint (verified to
+  # exist 2026-08-27), so serve that rather than asking vLLM to quantize a
+  # BF16 one on the fly: a published checkpoint is calibrated, reproducible,
+  # and downloads half as much. This replaces --quantization entirely.
+  #
+  # NOTE this invalidates F29's "~16 GiB" figure, which was measured for
+  # Q4_K_M under llama.cpp — GGUF is not a vLLM path. MEASURED from the HF
+  # tree API 2026-08-27: 28.8 GiB total, 28.7 GiB of it safetensors, in 81
+  # per-layer shards. Plus KV. Ample on a 96 GB card, which is why no H100
+  # is needed.
+  #
+  # spec.model rather than an `--model` flag in spec.args (D62): squall
+  # renders it in the engine's own dialect AND makes the replica answer to
+  # this CR's metadata.name, so --served-model-name is no longer needed here
+  # either. The same three lines work for Ollama and llama.cpp.
+  model: Qwen/Qwen3.8-27B-FP8
+
+  args:
+    # 128k. The model's NATIVE context is 262,144, so this is comfortably
+    # inside it and needs no YaRN scaling and no
+    # VLLM_ALLOW_LONG_MAX_MODEL_LEN override — those are only required past
+    # 262k, per the model card.
+    - --max-model-len
+    - "131072"
+    # KV cache at fp8 rather than fp16 — halves the KV footprint, which is
+    # what makes a 128k window comfortable. The model card does not mention
+    # this flag, so it is our choice and unverified for this architecture.
+    - --kv-cache-dtype
+    - fp8
+    # Qwen3.x always reasons, and its chat template OPENS the thinking block
+    # for you — so without a parser the raw chain-of-thought arrives inside
+    # message.content and ends with a literal `</think>` before the real
+    # answer. MEASURED 2026-08-27 on this exact model; the first completion
+    # came back as three paragraphs of deliberation followed by one sentence
+    # of answer. `qwen3` is a registered parser name in v0.28.0
+    # (vllm/reasoning/__init__.py). It moves the thinking to
+    # message.reasoning_content and leaves content clean, which is what
+    # anything downstream (LiteLLM, a chat UI) expects.
+    - --reasoning-parser
+    - qwen3
+
+  env:
+    VLLM_LOGGING_LEVEL: INFO
+
+  # The HF credential, by reference (D63): the value lives in a Secret and
+  # NEVER in this file, so nothing secret is ever committed to Git.
+  #
+  # This repo is NOT gated — HF reports gated:false, and an unauthenticated
+  # range-GET of config.json returns 206 — so no token is required to serve
+  # it at all.
+  #
+  # §12.4 applies whenever a token IS needed: fine-grained, read-only, scoped
+  # to the one repo, and rotatable. The weights are fetched ON the rented
+  # host, so the token reaches a machine we do not control, and dstack's own
+  # runner logs the replica's whole environment in cleartext (D69). Scope and
+  # rotation are the mitigation; secrecy is not available.
+  # NOT NEEDED FOR THIS MODEL — left commented ON PURPOSE. A referenced
+  # Secret that does not exist FAILS the Apply rather than sending an empty
+  # value (that is D54's failure shape, and refusing it is deliberate), so an
+  # active block here would break this sample on a fresh cluster for a
+  # credential the model does not require.
+  #
+  # Uncomment for a GATED or private repo, after creating the Secret in THIS
+  # namespace (cross-namespace references are deliberately unsupported):
+  #
+  #   kubectl create secret generic hf-token -n squall \
+  #     --from-literal=token=hf_xxxxxxxxxxxxxxxxxxxx
+  #
+  # secretEnv:
+  #   HF_TOKEN:
+  #     name: hf-token
+  #     key: token
+
+  features:
+    - TextGeneration
+
+  # MEASURED against the live Vast.ai catalogue 2026-08-27, not guessed.
+  # Every one of the 36 GPU offers on offer that day reported cpu 6-48,
+  # memory 8-32GB and disk EXACTLY 100GB. Over-asking here is the easiest
+  # way to get zero offers and no explanation (D58).
+  resources:
+    # vLLM is GPU-bound; the CPU only feeds it. Asking for more narrows the
+    # offer set and raises the price for nothing.
+    cpu:
+      count: "4.."
+    # NOT 32GB: marketplace hosts pair big GPUs with small host RAM (the
+    # chosen 96GB card comes with 16GB of it). Weights are mmap'd from disk
+    # straight to VRAM, so host RAM is not the staging buffer it looks like.
+    memory: 16GB..
+    # vLLM's workers talk over /dev/shm and the container default (64MB) is
+    # too small. Not an offer filter — a container setting.
+    shmSize: 8GB
+    # disk is deliberately UNSET. dstack applies 100GB when you say nothing
+    # (D55), and 100GB is exactly what every Vast offer reports — so any
+    # explicit floor above it matches NOTHING. `disk: 120GB..` returned zero
+    # offers across the entire catalogue. 100GB holds the ~16GB image plus
+    # 28.8GB of weights with room to spare.
+    gpu:
+      # 96GB Blackwell. Ruled out by measurement rather than taste:
+      #   RTX5090   32GB $0.95 de-germany  - too small for 28.8GB + KV
+      #   RTXPRO5000 48GB $0.92 cz-czechia - fits, but no headroom at 128k
+      #   A100      80GB $1.22 cz-czechia  - NO FP8. Ampere is sm80; the fp8
+      #                                      checkpoint needs sm89+.
+      #   H100      80GB $3.41 cz-czechia  - works, costs double
+      name: [RTXPRO6000WS, RTXPRO6000S]
+      memory: 90GB..
+
+  placement:
+    backends: [vastai]
+    # EUROPE ONLY. These are gpuhunt's NORMALISED location strings, matched
+    # EXACTLY and case-insensitively by dstack (server/services/offers.py) —
+    # not ISO codes, and not Vast's own "Madrid, ES" geolocation. There is
+    # no "europe" grouping; the list is the mechanism (D59).
+    #
+    # §12.3 governs what may run here at all: a marketplace host is not a
+    # data processor, and `location: EU` does not make it one. Internal,
+    # non-regulated workloads only.
+    regions:
+      - es-spain
+      - pt-portugal
+      - fr-france
+      - it-italy
+      - de-germany
+      - nl-netherlands
+      - be-belgium
+      - at-austria
+      - ch-switzerland
+      - pl-poland
+      - cz-czechia
+      - se-sweden
+      - fi-finland
+      - no-norway
+      - ie-ireland
+      - ro-romania
+      - bg-bulgaria
+      - hu-hungary
+      - ee-estonia
+      - lt-lithuania
+    # $1.20 was a guess and it matched nothing: the only EU 96GB offers are
+    # $1.88 and $2.52 (cz-czechia). This clears the first and not the second.
+    maxPricePerHour: "2.20"
+
+  probe:
+    # vLLM's own readiness endpoint. This is also enginePort(vllm)=8000's
+    # default, stated here rather than inherited so it is visible.
+    path: /health
+    interval: 10s
+    readyAfter: 2
+
+  minReplicas: 0
+  # A 27B model at fp8 is a long cold start: ~28 GB downloaded to the host,
+  # then loaded into VRAM. UNMEASURED for this model on this hardware —
+  # expect to tune it after the first real wake.
+  holdTimeout: 20m
+  scaleDownDelaySeconds: 300
+  fleet:
+    idleDuration: 10m
+  drainTimeout: 60s
+  provisioningTimeout: 30m
+  maxLifetime: 168h

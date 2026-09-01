@@ -1,0 +1,19 @@
+# Development-only Postgres for the e2e-bundled dstack server.
+#
+# This is NOT part of production wiring: deploy/helm/squall's chart doctrine
+# (values.yaml's dstack.database comment, matching ../ach's chart) is NO
+# embedded database subchart — production installs point dstack.database at
+# an externally-managed Postgres. This component exists only to give the
+# disposable kind e2e cluster a real Postgres to point at, so the wiring
+# (Secret -> DSTACK_DATABASE_URL, the wait-for-postgres init container) is
+# proven end to end without a GPU bill.
+#
+# Applied into squall-system — the same namespace deploy/helm/squall's
+# release lives in (hack/cluster.sh pre-creates it so this kustomize step
+# can land here before `helm upgrade --install --create-namespace` runs).
+namespace: squall-system
+
+resources:
+- postgres_deployment.yaml
+- postgres_service.yaml
+- postgres_secret.yaml

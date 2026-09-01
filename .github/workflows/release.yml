@@ -1,0 +1,147 @@
+name: release
+
+# Tag-driven publication. Pushing `v<x.y.z>` builds and publishes everything a
+# consumer needs: both container images, the Helm chart as an OCI artifact, and
+# a GitHub Release carrying the chart tarball, the CRDs and their checksums.
+#
+# Why this workflow gates itself instead of trusting ci.yml: ci.yml triggers on
+# `pull_request` only, because main is PR-protected and post-merge content
+# equals PR-head content. A release tag breaks that assumption — a tag can point
+# at a commit that never went through a pull request (the 0.1.0 initial commit
+# is exactly that), in which case NO gate has ever run on the tree being
+# published. So the gates run here too, and nothing is pushed to a registry
+# until they are green.
+#
+# Same invariant as ci.yml: every step is `./scripts/dev.sh make <target>`. CI
+# never reimplements a local command, so `make release-images` on a laptop and
+# the release job cannot drift apart.
+#
+# e2e is deliberately NOT here. It is a kind cluster inside a runner, ~30
+# minutes, and it already runs on every pull request; the tag path pays for the
+# gates that can actually fail on a version bump.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Releasing twice concurrently for the same tag would race two pushes to the
+# same package. Never cancel a half-published release, though: queue it.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # fetch-depth: 0 — qa-security's gitleaks/trufflehog scan the checkout,
+      # and the default shallow clone would only ever show them one commit.
+      - uses: actions/checkout@v6  # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up devtools (pull or build)
+        uses: ./.github/actions/setup-devtools
+
+      - name: Run linter
+        run: ./scripts/dev.sh make qa-lint
+
+      - name: Check gofmt cleanliness
+        run: ./scripts/dev.sh make qa-fmt-check
+
+      - name: Check Helm chart / CRD drift
+        run: ./scripts/dev.sh make helm-sync-check
+
+      - name: Run unit tests
+        run: ./scripts/dev.sh make test-unit
+
+      # The race-enabled variant, same as ci.yml. Do not swap in
+      # test-envtest-fast to save minutes: that one is the local inner loop.
+      - name: Run controller envtest
+        run: ./scripts/dev.sh make test-envtest
+
+      - name: Run security gate
+        run: ./scripts/dev.sh make qa-security
+
+  publish:
+    name: Publish
+    needs: gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write   # create the GitHub Release and upload its assets
+      packages: write   # push images and the chart to GHCR
+    steps:
+      - uses: actions/checkout@v6  # v4.3.1
+
+      - name: Set up devtools (pull or build)
+        uses: ./.github/actions/setup-devtools
+
+      # VERSION comes from the tag, never from the Makefile: the tag is what a
+      # human actually chose. `make release-check` then refuses to continue
+      # unless Chart.yaml's version and appVersion agree with it, so a tag that
+      # disagrees with the chart fails before anything is published rather than
+      # producing a 0.2.0 chart that installs 0.1.0 images.
+      #
+      # OWNER is lowercased because GHCR rejects an uppercase path segment,
+      # and it comes from github.repository_owner rather than a constant so a
+      # rehearsal on a scratch repository publishes to that owner's packages —
+      # exercising the real path instead of simulating it.
+      - name: Derive release coordinates
+        id: rel
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "owner=$OWNER" >> "$GITHUB_OUTPUT"
+          echo "::notice::publishing $VERSION to ghcr.io/$OWNER"
+
+      # REGISTRY_USER/REGISTRY_TOKEN are forwarded into the devtools container
+      # by scripts/dev.sh and consumed by the Makefile's registry_login. They
+      # are never interpolated into a command line — see the comment there.
+      - name: Build and push images
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./scripts/dev.sh make release-images \
+            VERSION='${{ steps.rel.outputs.version }}' \
+            IMAGE_NAMESPACE='${{ steps.rel.outputs.owner }}'
+
+      - name: Package and push the Helm chart
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./scripts/dev.sh make release-chart \
+            VERSION='${{ steps.rel.outputs.version }}' \
+            IMAGE_NAMESPACE='${{ steps.rel.outputs.owner }}'
+
+      - name: Collect release assets
+        run: |
+          ./scripts/dev.sh make release-assets \
+            VERSION='${{ steps.rel.outputs.version }}'
+
+      # --verify-tag: refuse to invent a tag that does not exist upstream.
+      # A tag carrying a pre-release suffix (v0.1.0-rc1) is marked as such, so
+      # a rehearsal cannot be mistaken for the real thing in the releases list.
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file dist/release-notes.md \
+            $prerelease \
+            dist/squall-${{ steps.rel.outputs.version }}.tgz \
+            dist/squall.ackstorm.ai_models.yaml \
+            dist/checksums.txt

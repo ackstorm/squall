@@ -1,0 +1,22 @@
+type: gateway
+name: squall-gw
+backend: aws
+region: eu-west-1
+
+# Wildcard domain: services are served at <run-name>.gpu.genai.internal.
+# The zone is private and VPC-bound (Terraform: modules/genai/dstack.tf), so these
+# names never resolve outside the VPC.
+domain: gpu.genai.internal
+
+# No public IP: the gateway sits in a private subnet and is reachable only from
+# inside the VPC. This is the front-path invariant - there is no public HTTP
+# inference endpoint anywhere in this design.
+public_ip: false
+
+# Disables SSL. The default is Let's Encrypt, which cannot validate a domain that
+# does not resolve publicly. Traffic is plain HTTP inside the VPC; the alternative
+# (ACM) would provision an ALB and needs the elasticloadbalancing permissions we
+# deliberately left out of the IAM policy.
+certificate: null
+
+default: true

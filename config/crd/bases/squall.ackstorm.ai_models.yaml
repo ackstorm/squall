@@ -1,0 +1,749 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: models.squall.ackstorm.ai
+spec:
+  group: squall.ackstorm.ai
+  names:
+    kind: Model
+    listKind: ModelList
+    plural: models
+    singular: model
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.runId
+      name: Run
+      type: string
+    - jsonPath: .spec.engine
+      name: Engine
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    - jsonPath: .status.servedModel
+      name: Served
+      priority: 1
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Schedulable")].status
+      name: Schedulable
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Schedulable")].reason
+      name: Reason
+      priority: 1
+      type: string
+    - jsonPath: .status.fleet[*].state
+      name: Fleet
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Model is the Schema for the models API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              ModelSpec defines the desired state of Model.
+
+              Shaped deliberately after kubeai.org/v1 Model (F27) so a reviewer sees
+              the same shape in an MR as the in-cluster models beside it, and moving a
+              model in-cluster ↔ external is mostly a placement diff (spec §5.1).
+
+              There is deliberately NO `weights` field: spec v0.17 cut it. Weights ride
+              inside Args/Env in each engine's own vocabulary (`--model` for vLLM,
+              `-hf` for llama.cpp, an env var or pull command for Ollama) — there is no
+              translation table (§8). There is likewise no `scaling:`-style block, no
+              `budget`, `routerClass`, `suspend`, or `firstRequestPolicy`: the
+              controller MUST NOT implement load-based 1..N scaling (§3, §5.2); those
+              fields were deliberately cut in earlier spec revisions and reintroducing
+              any of them contradicts the controller contract.
+            properties:
+              args:
+                description: Args is the ordered, engine-native argument list (e.g.
+                  vLLM flags).
+                items:
+                  type: string
+                type: array
+              drainTimeout:
+                default: 120s
+                description: |-
+                  DrainTimeout bounds the in-flight drain the deletion finalizer
+                  performs before runs are deleted and the fleet released (§5.2).
+
+                  Defaulted (D123): with a zero here, `pastDeadline` is true on the
+                  finalizer's FIRST pass and T12's bounded drain never runs — a delete
+                  cuts any generation in flight immediately. The default is the spec's
+                  own §5.1 example value.
+                type: string
+              engine:
+                description: |-
+                  Engine selects the serving container template (vllm | llama-cpp |
+                  ollama). See ModelEngine.
+                enum:
+                - vllm
+                - llama-cpp
+                - ollama
+                type: string
+              env:
+                additionalProperties:
+                  type: string
+                description: Env is the engine-native environment map.
+                type: object
+              features:
+                description: |-
+                  Features declares what this model can serve, and is surfaced verbatim
+                  as the `features` array on squall-proxy's /v1/models listing. It is a
+                  declared property of the model, not something squall infers: the CR
+                  author knows whether an image serves text generation, embeddings or
+                  speech, and nothing squall can observe would tell it.
+
+                  Mirrors KubeAI's `spec.features`, because `type: kubeai` discovery
+                  consumes this listing (F27, F30).
+                items:
+                  description: |-
+                    ModelFeature is a capability a Model serves, surfaced verbatim on
+                    squall-proxy's /v1/models listing. The values mirror KubeAI's, because
+                    `type: kubeai` discovery consumes that listing (F27, F30).
+                  enum:
+                  - TextGeneration
+                  - TextEmbedding
+                  - SpeechToText
+                  type: string
+                minItems: 1
+                type: array
+              fleet:
+                description: |-
+                  Fleet configures the dstack fleet backing this model, in particular
+                  the machine-release idle window.
+                properties:
+                  idleDuration:
+                    description: |-
+                      IdleDuration is how long the underlying machine is kept after the
+                      job-layer flip to replicas: 0 before the fleet releases it (§6).
+                      It is REQUIRED with NO default: dstack's own default is 3 days
+                      (F21), the single most expensive footgun in the system — an
+                      operator who forgets this field pays for an idle GPU for three days,
+                      not minutes. It also directly conditions §7: `hold` is only viable
+                      inside this warm window.
+                    type: string
+                required:
+                - idleDuration
+                type: object
+              health:
+                default: {}
+                description: |-
+                  Health is the liveness policy for a replica that is already UP: how
+                  squall decides it is taking traffic and delivering nothing, and tears it
+                  down. Deliberately NOT part of spec.probe, which is a straight passthrough
+                  to dstack's own HTTP probe — these thresholds count REAL completions, not
+                  probe results, and conflating the two would suggest squall probes
+                  something itself. It does not.
+                properties:
+                  failureThreshold:
+                    default: 3
+                    description: |-
+                      FailureThreshold is how many requests must have failed since the last
+                      success before UnhealthyAfter is allowed to fire — Kubernetes'
+                      failureThreshold by another name, and the symmetric twin of the probe's
+                      readyAfter. Time alone has a cheap counter-example: a Model that served
+                      fine, went quiet for twenty minutes and then failed ONE request has a
+                      twenty-minute-old last success and current traffic, and would be torn
+                      down on the evidence of that single failure.
+
+                      A failure is a committed non-2xx, or a Model advertised Ready whose
+                      gateway would not serve. A client disconnecting mid-stream is not the
+                      replica's fault and is not counted. The count RESETS on every success, so
+                      it is consecutive failures, not a lifetime total.
+
+                      It CANNOT be disabled. A value <= 0 is read as the default 3 rather than
+                      as "fire with no evidence": 1->0 fails safe, and the one setting that must
+                      never be reachable is a destructive trigger with no floor under it. To
+                      turn the whole check off, set unhealthyAfter to 0.
+                    format: int32
+                    type: integer
+                  unhealthyAfter:
+                    default: 15m
+                    description: |-
+                      UnhealthyAfter is how long requests may keep arriving with nothing
+                      delivered before the run is flipped to zero replicas and left Asleep
+                      until the next request wakes a fresh one.
+
+                      The clock is anchored at the LATER of the newest success and
+                      status.wakeStartedAt, so a freshly woken run that has not served anything
+                      yet is measured from its own wake and not from the epoch.
+
+                      Zero DISABLES the whole check. The default is 15m and must stay
+                      comfortably above the slowest legitimate generation: an unfinished
+                      request is not a success, so a window below the worst-case generation
+                      time would tear down a working GPU mid-answer.
+                    type: string
+                type: object
+              holdTimeout:
+                description: |-
+                  HoldTimeout bounds how long squall-proxy blocks a cold request
+                  waiting for the model to wake before it falls back (§7). 0 means
+                  answer immediately without holding.
+                type: string
+              image:
+                description: |-
+                  Image is the pinned image digest for this model (§8, §9). Engine
+                  version is a per-model attribute; there is no "the platform's vLLM
+                  version". Images MUST be userspace-only — GPU drivers come from the
+                  backend (dstack's AMI on AWS/DO, the marketplace host on Vast), so an
+                  image bundling its own driver stack works on one path and fails on
+                  the other.
+                pattern: ^.+@sha256:[a-f0-9]{64}$
+                type: string
+              maxLifetime:
+                description: |-
+                  MaxLifetime is ALERT-ONLY (§5.2) — it is exported as a metric pair
+                  (§10) and never actuated, and specifically never implemented via
+                  dstack's native max_duration (F14, F20: a native hard stop is a
+                  scheduled outage plus a full recreate). It stays meaningful even
+                  under MinReplicas: 1, because that is precisely the safety net for a
+                  pinned GPU everyone forgot about.
+                type: string
+              minReplicas:
+                description: |-
+                  MinReplicas is the pin switch: 0 means on-demand (the controller
+                  flips 0↔1 with demand, §6), 1 means PINNED — the controller holds
+                  replicas: 1 and never sleeps it. There is no range and no `scaling:`
+                  block; external services are always declared to dstack with a fixed
+                  replica count (F15, F16).
+                enum:
+                - 0
+                - 1
+                format: int32
+                type: integer
+              model:
+                description: |-
+                  Model is WHICH model to serve — the weights, not the engine.
+
+                  This is the field whose absence made an Ollama Model unrunnable
+                  (ledger D62): spec.image names the ENGINE (`ollama/ollama`,
+                  `vllm/vllm-openai`), and for Ollama and llama.cpp nothing else in the
+                  CR could say what to load, so the CR started an empty server. Each
+                  engine interprets it in its own dialect, because there is no shared
+                  registry and pretending otherwise would be a lie:
+
+                    vllm      a HuggingFace repo    Qwen/Qwen3.8-27B-FP8
+                    ollama    an Ollama tag         qwen3:8b
+                    llama-cpp a HuggingFace repo    bartowski/Qwen3-8B-GGUF
+
+                  Whatever it names, squall makes the replica ALSO answer to this
+                  Model's metadata.name, so callers address every engine identically
+                  (vLLM via --served-model-name, Ollama via `ollama cp`). That name is
+                  what goes in the OpenAI request body.
+
+                  Optional: an image with the weights baked in needs nothing here, and
+                  spec.args can always say it the engine's own way instead.
+                type: string
+              owner:
+                description: |-
+                  Owner is surfaced verbatim as `owned_by` on the /v1/models listing.
+                  Empty is normal and is what KubeAI emits by default.
+                type: string
+              placement:
+                description: Placement scopes and cost-bounds where dstack may provision.
+                properties:
+                  backends:
+                    description: |-
+                      Backends is the compliance allowlist (§12.3): the mandatory
+                      workload-eligibility classification (marketplace vs AWS vs
+                      DigitalOcean) is enforced through this field, not documented beside
+                      it. It MUST NOT be empty — an empty list would let the controller
+                      pick any backend, silently defeating the eligibility table.
+                    items:
+                      type: string
+                    minItems: 1
+                    type: array
+                  maxPricePerHour:
+                    description: |-
+                      MaxPricePerHour is a cost ceiling, enforced by dstack BEFORE
+                      provisioning. Write it however you like — `1.20` and `"1.20"` are both
+                      accepted (D31).
+                    x-kubernetes-preserve-unknown-fields: true
+                  regions:
+                    description: |-
+                      Regions is a backend-native filter (e.g. an EU geo constraint on
+                      Vast). Semantics are defined by the backend, not by squall.
+                    items:
+                      type: string
+                    type: array
+                required:
+                - backends
+                type: object
+              probe:
+                description: |-
+                  Probe is the readiness probe dstack runs against the replica — §6
+                  evidence (a). Omitted, the path is derived from spec.engine and the
+                  timings default to 5s / 2 successes.
+                properties:
+                  interval:
+                    description: |-
+                      Interval is how often dstack probes. Empty means 5s. It bounds how
+                      stale evidence (a) can be, so it interacts with holdTimeout: a wake
+                      cannot be observed faster than Interval * ReadyAfter.
+                    type: string
+                  method:
+                    description: Method is the HTTP method. Empty defers to dstack's
+                      own default (GET).
+                    enum:
+                    - GET
+                    - POST
+                    - HEAD
+                    type: string
+                  path:
+                    description: |-
+                      Path is the HTTP path dstack probes. Empty derives it from
+                      spec.engine (vLLM and llama.cpp: /health, Ollama: /), which is right
+                      for a stock engine image and wrong for anything customised.
+                    type: string
+                  readyAfter:
+                    description: |-
+                      ReadyAfter is how many CONSECUTIVE successes mark the replica ready.
+                      Empty means 2. Raising it buys confidence and costs wake latency
+                      (Interval * ReadyAfter before a held request can be served); 0 is
+                      rejected rather than treated as "always ready" — §6 does not allow
+                      "dstack says the job is running" to stand in for readiness.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  timeout:
+                    description: Timeout bounds a single probe attempt. Empty defers
+                      to dstack.
+                    type: string
+                type: object
+              provisioningTimeout:
+                description: |-
+                  ProvisioningTimeout is the single age-based DESTRUCTIVE trigger in
+                  the whole controller contract (§5.2): a run that never reaches Ready
+                  within this window is destroyed, alarmed, and marked Dead. No other
+                  timeout in this spec destroys anything — see MaxLifetime.
+                type: string
+              resources:
+                description: Resources carries the dstack resource ask for the run.
+                properties:
+                  cpu:
+                    description: CPU is dstack's CPUSpec.
+                    properties:
+                      arch:
+                        description: |-
+                          Arch is the CPU architecture dstack should filter on. Optional —
+                          dstack does not constrain architecture when this is empty.
+                        enum:
+                        - x86
+                        - arm
+                        type: string
+                      count:
+                        description: |-
+                          Count is dstack's Range syntax for the number of cores (e.g. "2",
+                          "4..8"). Empty defers to dstack's own default, which is a MINIMUM of
+                          2 (DEFAULT_CPU_COUNT, core/models/resources.py) — not "unconstrained".
+                        type: string
+                    type: object
+                  disk:
+                    description: |-
+                      Disk is dstack's native range for disk size (e.g. "100GB..").
+                      This is where the model weights land, so it is a real sizing
+                      decision: a 70B model in fp16 is ~140GB before any cache.
+                    type: string
+                  gpu:
+                    description: GPU is dstack's GPUSpec, passed through verbatim
+                      (F33).
+                    properties:
+                      computeCapability:
+                        description: |-
+                          ComputeCapability is the minimum CUDA compute capability dstack
+                          should filter on (e.g. "7.5").
+                        type: string
+                      count:
+                        description: |-
+                          Count is dstack's Range syntax for the number of GPUs (e.g. "1",
+                          "1..2").
+                        type: string
+                      memory:
+                        description: |-
+                          Memory is dstack's native range for per-GPU VRAM (e.g.
+                          "24GB..32GB").
+                        type: string
+                      name:
+                        description: |-
+                          Name is a backend-agnostic list of acceptable card names (e.g.
+                          [A10G, RTX3090, RTX5090]) — the bandwidth requirement, stated as
+                          hardware rather than a memory figure.
+                        items:
+                          type: string
+                        type: array
+                      totalMemory:
+                        description: |-
+                          TotalMemory is dstack's native range for aggregate VRAM across all
+                          requested GPUs.
+                        type: string
+                      vendor:
+                        description: |-
+                          Vendor filters by GPU vendor (e.g. "nvidia", "amd", "google",
+                          "intel"). Optional — dstack defaults to nvidia.
+                        type: string
+                    type: object
+                  memory:
+                    description: |-
+                      Memory is dstack's native range for system RAM (e.g. "8GB..",
+                      "16GB..32GB").
+                    type: string
+                  shmSize:
+                    description: |-
+                      ShmSize is the size of /dev/shm (e.g. "8GB"). A single size, not a
+                      range — dstack's shm_size is a scalar. Engines that shard across
+                      GPUs with NCCL, or that use PyTorch dataloader workers, need this
+                      raised above the container default.
+                    type: string
+                type: object
+              scaleDownDelaySeconds:
+                default: 300
+                description: |-
+                  ScaleDownDelaySeconds is the job-layer idle window: once in-flight
+                  requests are 0 and the newest request is older than this many
+                  seconds, the controller flips replicas: 0 (§6). This releases the
+                  *job*, not the machine — see ModelFleet.IdleDuration for that layer.
+
+                  Defaulted (D105): this value is also hasDemand's TTL, so a zero here
+                  makes an on-demand Model permanently unwakeable — the annotation the
+                  proxy writes expires the instant it lands. The default is the spec's
+                  own §5.1 example value, and because omitempty drops an explicit 0
+                  from serialization, even a literal `scaleDownDelaySeconds: 0` reads
+                  back as 300 rather than as "never wake".
+                format: int32
+                type: integer
+              secretEnv:
+                additionalProperties:
+                  description: |-
+                    SecretKeyRef points at one key of a Secret in the Model's own namespace.
+                    It is how a credential reaches a replica WITHOUT ever being written into
+                    the CR, and therefore without being committed to Git — which is the only
+                    part of the exposure squall can actually remove (D63).
+
+                    Read this before using it. The weights are fetched ON the rented host, so
+                    a token for a gated model MUST reach a machine we do not control. §12.3
+                    is explicit that a marketplace host is not a data processor. This field
+                    does not make that safe; it makes it auditable and rotatable. §12.4's
+                    rule stands: fine-grained, read-only, scoped to the one repo that needs
+                    it. "The question is never whether one leaks; it is how little it hurts
+                    when it does."
+                  properties:
+                    key:
+                      description: Key is the key within that Secret.
+                      minLength: 1
+                      type: string
+                    name:
+                      description: |-
+                        Name is the Secret's name, in the Model's namespace. Cross-namespace
+                        references are deliberately not supported: a Model must not be able
+                        to read credentials out of a namespace its author cannot see.
+                      minLength: 1
+                      type: string
+                  required:
+                  - key
+                  - name
+                  type: object
+                description: |-
+                  SecretEnv is environment variables whose VALUES come from a Secret in
+                  this Model's namespace, resolved by the controller at Apply time. Use
+                  it for anything that must not appear in Git — HF_TOKEN for a gated
+                  model being the motivating case (D63).
+
+                  Keys here are environment variable names, exactly as in Env. A name
+                  present in BOTH is rejected rather than silently resolved one way:
+                  which one won would be invisible in the CR and catastrophic to guess
+                  wrong.
+
+                  A missing Secret or key FAILS the reconcile loudly. It must never
+                  degrade into sending an empty value — an engine started with
+                  HF_TOKEN="" provisions, bills, and then fails to download, which
+                  reads as a broken model rather than a missing credential.
+                type: object
+              uncontrolledTimeout:
+                description: |-
+                  UncontrolledTimeout bounds how long capacity may stay up while idle
+                  evidence is unavailable. Nil defaults to min(4x the idle window + 15m,
+                  2h); an explicit value is not capped, and zero opts out.
+                type: string
+            required:
+            - engine
+            - features
+            - fleet
+            - image
+            - minReplicas
+            - placement
+            - provisioningTimeout
+            type: object
+          status:
+            description: ModelStatus defines the observed state of Model.
+            properties:
+              conditions:
+                description: Conditions carries richer, standard status detail alongside
+                  Phase.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              deploymentNum:
+                description: |-
+                  DeploymentNum is the idempotency token within a run generation: it
+                  lets the controller recognize its own prior actuation (e.g. across a
+                  restart or a watch replay) without creating a second run.
+                format: int64
+                type: integer
+              fleet:
+                description: |-
+                  Fleet reports the dstack pools backing this Model, in placement order.
+                  It is a mirror, never a source of truth.
+                items:
+                  description: |-
+                    FleetStatus reports, per backend this Model may draw instances from, whether
+                    dstack actually has a pool that admits it.
+                  properties:
+                    backend:
+                      description: Backend is the dstack backend name, e.g. "vastai".
+                      type: string
+                    name:
+                      description: |-
+                        Name is the fleet squall looked for or created (dstack.FleetName).
+                        Empty when the backend is not configured.
+                      type: string
+                    state:
+                      description: State is what squall found for this backend.
+                      enum:
+                      - Admitting
+                      - Created
+                      - Unfleeted
+                      - Unconfigured
+                      type: string
+                  required:
+                  - backend
+                  - state
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - backend
+                x-kubernetes-list-type: map
+              forwardModel:
+                description: |-
+                  ForwardModel is the SINGLE served id squall-proxy may rewrite an
+                  outbound request's "model" field to, or empty when there is no safe
+                  single answer (a mismatch, or several served ids with no expectation
+                  to disambiguate them).
+
+                  It exists because ServedModel above must stay the honest diagnostic —
+                  D65's protection is that `kubectl get models` shows a 0.6B model
+                  standing in for a 27B one — while the proxy needs exactly one name.
+                  D100, measured live 2026-08-31: with one field serving both purposes,
+                  an Ollama replica (which reports the `ollama cp` alias AND the source
+                  weights) had every request rewritten to
+                  "ollama-tiny:latest,qwen2.5:0.5b" and answered 400. The check passing
+                  is what broke serving.
+                type: string
+              lastRequestAt:
+                description: |-
+                  LastRequestAt is the newest request instant reported by squall-proxy.
+                  It survives proxy rollouts and only moves forward.
+                format: date-time
+                type: string
+              phase:
+                description: |-
+                  Phase is the controller's sole-writer state; see ModelPhase. The
+                  proxy branches on this value and never probes the engine itself.
+                type: string
+              replica:
+                description: |-
+                  Replica is how to reach the live replica's engine port DIRECTLY, over
+                  an SSH tunnel, without dstack's own service proxy in the request path.
+
+                  Measured 2026-08-28 against a live Vast.ai GPU (see
+                  decisions-and-open-items.md): the direct path served 128 concurrent
+                  requests with zero failures at 1856 tok/s, where the same load through
+                  dstack failed 31 of 128 at 407 tok/s — because dstack's proxy pins two
+                  database connections for the whole lifetime of every streamed
+                  response, making its connection pool, not the GPU, the ceiling.
+
+                  nil is normal and always safe: nothing running, or a topology needing
+                  more than one SSH hop (a Kubernetes jump pod, a dockerized backend).
+                  squall-proxy then falls back to ServiceURL above, which works
+                  everywhere. It is never a half-answer — an endpoint that cannot be
+                  dialled would send real user traffic into a tunnel that cannot exist.
+                properties:
+                  host:
+                    description: Host is the replica's publicly reachable SSH host.
+                    type: string
+                  servicePort:
+                    description: |-
+                      ServicePort is where the engine listens inside the container: the far
+                      end of the forward, NOT a port reachable from outside.
+                    format: int32
+                    type: integer
+                  sshPort:
+                    description: |-
+                      SSHPort is its SSH port. On marketplace backends this is a per-instance
+                      mapped port, not 22.
+                    format: int32
+                    type: integer
+                  user:
+                    description: |-
+                      User is the SSH user dstack provisioned the container for — "root" on
+                      every backend squall supports as of 0.21.2.
+                    type: string
+                required:
+                - host
+                - servicePort
+                - sshPort
+                - user
+                type: object
+              runId:
+                description: |-
+                  RunId is a MUTABLE POINTER, not an identity (F17, F20): it stays
+                  stable across 0↔1 flips within one run generation, and is
+                  invalidated when the model enters a terminal state. Identity is
+                  owned by metadata.uid, carried as a tag/label on every dstack run,
+                  fleet, and provider resource — never by this field.
+                type: string
+              runName:
+                description: |-
+                  RunName is the name this Model's dstack run is filed under. It is
+                  normally "<namespace>-<name>": a dstack run name is global to the
+                  server, so keying it on the bare Model name let two Models of the
+                  same name in different namespaces silently drive ONE run (F1).
+
+                  It is recorded rather than always recomputed because a run minted
+                  before F1 carries the bare name, and that run is a paid GPU. Once
+                  resolved, this field pins the identity for the Model's lifetime, so
+                  teardown and the orphan reaper target the run that actually exists.
+                type: string
+              runUID:
+                description: |-
+                  RunUID is the Model UID that the dstack run under RunName was minted
+                  for, as read back from the run itself. It normally equals this
+                  object's own metadata.uid; when it does not, the run outlived a
+                  previous Model of the same namespace/name.
+                type: string
+              servedModel:
+                description: |-
+                  ServedModel is what the replica said it serves, read from its own
+                  GET /v1/models once the run first probes green.
+
+                  This exists because a probe is not evidence about WHICH model answered.
+                  On 2026-08-27 a run whose args were dropped served vLLM's built-in
+                  default, Qwen/Qwen3-0.6B, with success_streak climbing and /health
+                  returning 200 the whole time — a 0.6B model standing in for a 27B one,
+                  with nothing anywhere disagreeing (ledger D65). This field is the
+                  disagreement.
+                type: string
+              serviceURL:
+                description: |-
+                  ServiceURL is where a Ready replica's traffic goes, as dstack reported
+                  it — a path relative to the dstack server's base URL, e.g.
+                  "/proxy/services/main/qwen3-8-27b/".
+
+                  This closes D25. Before it, squall-proxy resolved a backend from a
+                  printf template in an env var, which meant an installed chart could not
+                  reach a real replica until an operator hand-edited it to match dstack's
+                  routing. The controller already receives this on every Apply
+                  (dstack.Run.ServiceURL); it just never wrote it down. Publishing it
+                  here means the proxy learns it from the informer cache it is ALREADY
+                  running — no new watch, no new API call on the request path.
+                type: string
+              uncontrolledSince:
+                description: UncontrolledSince records when idle evidence became incomplete.
+                format: date-time
+                type: string
+              wakeStartedAt:
+                description: |-
+                  WakeStartedAt is when the controller actuated the most recent 0->1
+                  flip — the anchor provisioningTimeout measures from (§5.2). It is
+                  deliberately NOT dstack's submitted_at: an in-place flip (F17) reuses
+                  the run, so submitted_at may date from the run's first creation and
+                  would fire the deadline instantly on a re-wake. Cleared when the
+                  model sleeps.
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

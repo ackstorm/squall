@@ -1,0 +1,7 @@
+# Task 12.1 — see discovery.yaml's header. Deliberately NOT referenced by
+# hack/cluster.sh; apply by hand against a cluster that has
+# alitellm-operator's litellm.ackstorm.ai CRDs installed:
+#
+#   ./scripts/dev.sh kubectl apply -k test/e2e/cluster/04-discovery
+resources:
+- discovery.yaml

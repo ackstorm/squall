@@ -1,0 +1,36 @@
+# One Service per Model the e2e suite uses (test/e2e/cluster/03-fixtures'
+# e2e-fixture-model and test/e2e/e2e_test.go's e2e-loop-model), each named
+# after the Model itself and selecting the single model-mock Deployment.
+# SQUALL_BACKEND_URL_TEMPLATE (02-operator/proxy-patch.yaml) is
+# "http://%s.squall.svc.cluster.local:8080" — the %s is the model name, so
+# this naming is what makes TemplateBackend's substitution resolve to a real
+# backend instead of a made-up constant URL.
+apiVersion: v1
+kind: Service
+metadata:
+  name: e2e-fixture-model
+  namespace: squall
+  labels:
+    app.kubernetes.io/name: model-mock
+spec:
+  selector:
+    app.kubernetes.io/name: model-mock
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: e2e-loop-model
+  namespace: squall
+  labels:
+    app.kubernetes.io/name: model-mock
+spec:
+  selector:
+    app.kubernetes.io/name: model-mock
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: squall-proxy
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: proxy
+spec:
+  selector:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: proxy
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http

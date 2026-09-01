@@ -1,0 +1,11 @@
+# `squall` is the workload namespace: fake-dstack (01) and the Model fixture
+# (03) live here. The control-plane namespace (squall-system) is deliberately
+# NOT created here — config/default already owns that Namespace object
+# (phase 02), and declaring it twice would just be two manifests fighting
+# over one object for no benefit.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: squall
+  labels:
+    e2e: "true"

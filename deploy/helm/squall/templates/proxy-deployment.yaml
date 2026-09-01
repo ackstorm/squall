@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: squall-proxy
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: squall
+      app.kubernetes.io/component: proxy
+  replicas: {{ .Values.proxy.replicas }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: squall
+        app.kubernetes.io/component: proxy
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.proxy.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: {{ .Values.proxy.serviceAccountName }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: proxy
+        image: "{{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.proxy.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+          - name: SQUALL_NAMESPACE
+            value: {{ .Values.proxy.env.namespace | quote }}
+          - name: SQUALL_DEMAND_COOLDOWN
+            value: {{ .Values.proxy.env.demandCooldown | quote }}
+          - name: SQUALL_DEMAND_REFRESH_INTERVAL
+            value: {{ .Values.proxy.env.demandRefreshInterval | quote }}
+          - name: SQUALL_MAX_PENDING_PER_MODEL
+            value: {{ .Values.proxy.env.maxPendingPerModel | quote }}
+          - name: SQUALL_DSTACK_URL
+            value: {{ .Values.controller.env.dstackURL | quote }}
+          # LIVE-4: dstack's service proxy demands a Bearer token by default.
+          # Same credential squall-controller authenticates to dstack's API
+          # with (controller.env.dstackToken) — one token, one dstack
+          # project, reused rather than a second copy of the same secret.
+{{- include "squall.dstackTokenEnv" . | nindent 10 }}
+          - name: SQUALL_BACKEND_URL_TEMPLATE
+            value: {{ .Values.proxy.env.backendURLTemplate | quote }}
+          - name: SQUALL_PROXY_ADDR
+            value: {{ .Values.proxy.env.addr | quote }}
+          # D87: Debug turns on the per-request record for every request;
+          # Info (the default) keeps only held and failed ones.
+          - name: SQUALL_LOG_LEVEL
+            value: {{ .Values.proxy.env.logLevel | quote }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - "ALL"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          {{- toYaml .Values.proxy.resources | nindent 10 }}

@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# setup-devtools — pull the pre-built devtools image from GHCR, restore Go
+# caches, and fall back to a local build if the registry image is missing.
+#
+# The devtools image is content-addressed by the SHA-256 of Dockerfile.devtools.
+# `.github/workflows/devtools-image.yml` builds and pushes the image to
+# `ghcr.io/<owner>/squall-devtools:<hash>` whenever Dockerfile.devtools (or the
+# image workflow itself) changes. Other CI jobs use this composite action to
+# consume the pre-built image instead of rebuilding from scratch.
+#
+# Fallback semantics:
+#   - If `docker pull` succeeds, the image is tagged as `squall-devtools:latest`
+#     and scripts/dev.sh skips its own build. dev.sh decides this by comparing
+#     the image's `squall.dockerfile.sha` LABEL, so devtools-image.yml must
+#     stamp that label — an unlabelled image gets rebuilt in every job and the
+#     pull was wasted. The check below makes that regression loud, not silent.
+#   - If `docker pull` fails (hash not yet pushed, GHCR unavailable, fork PR
+#     without packages: read), scripts/dev.sh builds the image locally — slower
+#     but always correct.
+
+name: setup-devtools
+description: Restore Go caches, pull pre-built devtools image from GHCR, fall back to local build.
+
+runs:
+  using: composite
+  steps:
+    - name: Cache Go module + build caches (mounted into devtools container)
+      uses: actions/cache@v5  # v4.3.0
+      with:
+        path: |
+          .gocache/build
+          .gocache/gopath
+        key: ${{ runner.os }}-devtools-${{ hashFiles('**/go.sum', 'Dockerfile.devtools') }}
+        restore-keys: ${{ runner.os }}-devtools-
+
+    - name: Compute devtools image reference
+      id: ref
+      shell: bash
+      run: |
+        FULL_SHA=$(sha256sum Dockerfile.devtools | cut -d' ' -f1)
+        OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        echo "hash=${FULL_SHA:0:12}" >> "$GITHUB_OUTPUT"
+        echo "full_sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
+        echo "image=ghcr.io/$OWNER/squall-devtools:${FULL_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+    - name: Log in to GHCR
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+    - name: Pull pre-built devtools image (best-effort)
+      shell: bash
+      run: |
+        if docker pull "${{ steps.ref.outputs.image }}" 2>/dev/null; then
+          docker tag "${{ steps.ref.outputs.image }}" squall-devtools:latest
+          got=$(docker image inspect -f '{{index .Config.Labels "squall.dockerfile.sha"}}' squall-devtools:latest 2>/dev/null || true)
+          if [ "$got" = "${{ steps.ref.outputs.full_sha }}" ]; then
+            echo "::notice::Pulled pre-built devtools image ${{ steps.ref.outputs.hash }}"
+          else
+            echo "::warning::Pulled image ${{ steps.ref.outputs.hash }} is missing/has a stale squall.dockerfile.sha label (got '$got') — scripts/dev.sh will rebuild it locally, wasting the pull. Check the labels: input in devtools-image.yml."
+          fi
+        else
+          echo "::notice::No pre-built devtools image for hash ${{ steps.ref.outputs.hash }} — will build locally"
+        fi
+
+    # Local-build fallback. DOCKER_BUILDKIT is pinned on because
+    # Dockerfile.devtools uses `RUN --mount=type=cache,...`: under the legacy
+    # builder that is a hard parse error, not a degraded build.
+    - name: Ensure devtools image exists (build locally if pull missed)
+      shell: bash
+      env:
+        DOCKER_BUILDKIT: '1'
+      run: ./scripts/dev.sh true

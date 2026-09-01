@@ -1,0 +1,77 @@
+# The CHEAP live-battery fixture (owner's call, 2026-08-31): the previous
+# battery burned an RTX PRO 6000 at $1.437/h to test control-plane behaviour
+# that does not care how big the model is. A 0.5B model on the cheapest GPU
+# Vast will rent tests exactly the same code paths for ~5% of the money.
+#
+# It also widens engine coverage: every live run so far has been vLLM, so the
+# Ollama branch of engineCommands (pull + `ollama cp` alias, D62) has never
+# been exercised against a real GPU.
+#
+# Why qwen2.5:0.5b: Apache-2.0, pulled from Ollama's own registry, so NO
+# Hugging Face token is involved. ~400 MB, so the pull is seconds rather than
+# minutes — which is most of what makes a cold wake expensive to test.
+#
+# Applied by hand, not by Flux. Runbook fixture, not a deployed workload.
+apiVersion: squall.ackstorm.ai/v1alpha1
+kind: Model
+metadata:
+  name: ollama-tiny
+  namespace: squall
+spec:
+  engine: ollama
+  image: ollama/ollama@sha256:c622a7adec67cf5bd7fe1802b7e26aa583a955a54e91d132889301f50c3e0bd0
+  model: qwen2.5:0.5b
+  features: [TextGeneration]
+  minReplicas: 0
+
+  # Deliberately short everywhere. These are test-fixture values, NOT
+  # defaults to copy into a real workload: they trade money for iteration
+  # speed, which is the wrong trade for anything serving users.
+  holdTimeout: 10m
+  drainTimeout: 30s
+  maxLifetime: 4h
+  provisioningTimeout: 20m
+  scaleDownDelaySeconds: 120
+
+  # Sized for the live unhealthy-teardown test (battery test 6): three
+  # consecutive non-2xx while traffic is still arriving, then two minutes
+  # without a single delivered 2xx, and the replica is torn down. At 15m
+  # the same test would cost 7x the GPU time to prove the same thing.
+  health:
+    unhealthyAfter: 2m
+    failureThreshold: 3
+
+  # Short on purpose: the ~4m gap between squall's 1->0 flip and the Vast
+  # instance actually disappearing is still unexplained (observed 2026-08-31
+  # against idleDuration: 10m, so it was NOT this timer). Setting it to 2m
+  # makes the two hypotheses distinguishable in one run.
+  fleet:
+    idleDuration: 2m
+
+  probe:
+    # Ollama exposes no /health; its root answers "Ollama is running".
+    path: /
+    interval: 10s
+    readyAfter: 2
+
+  resources:
+    cpu: {count: "2.."}
+    memory: 8GB..
+    shmSize: 2GB
+    gpu:
+      # NO name list. Naming cards pins the price to whatever those cards
+      # cost; a 0.5B model needs about 1 GB of VRAM, so anything Vast will
+      # rent is oversized. Let dstack take the cheapest machine that clears
+      # the floor.
+      memory: 8GB..
+
+  placement:
+    backends: [vastai]
+    # ~5% of the RTX PRO 6000 fixture's ceiling. If nothing is offered under
+    # this, the Model reports Schedulable=False rather than quietly renting
+    # something expensive.
+    maxPricePerHour: "0.30"
+    regions: [es-spain, pt-portugal, fr-france, it-italy, de-germany, nl-netherlands,
+              be-belgium, at-austria, ch-switzerland, pl-poland, cz-czechia, se-sweden,
+              fi-finland, no-norway, ie-ireland, ro-romania, bg-bulgaria, hu-hungary,
+              ee-estonia, lt-lithuania]

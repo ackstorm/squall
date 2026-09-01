@@ -1,0 +1,121 @@
+{{- if .Values.dstack.fleet }}
+{{ fail "dstack.fleet (singular) is no longer supported since LIVE-7 — migrate to dstack.fleets, a list of the same shape (see values.yaml's `dstack.fleets` default and its vastai example). Renaming the key is a one-line values.yaml change; nothing here silently drops it." }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dstack-fleet
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: dstack
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    # Deleted and recreated on every install/upgrade — required for
+    # idempotency across `helm upgrade` (a Job's spec is immutable, so a
+    # same-name Job left over from the previous release would block re-runs).
+    helm.sh/hook-delete-policy: before-hook-creation
+    helm.sh/hook-weight: "1"
+spec:
+  backoffLimit: 0
+  # One server-health wait plus one active-wait PER fleet, each bounded by
+  # waitAttempts * waitIntervalSeconds — scales with len(dstack.fleets) so N
+  # fleets do not silently share the budget meant for one.
+  activeDeadlineSeconds: {{ add (mul (add (len .Values.dstack.fleets) 1) (.Values.dstack.waitAttempts | int) (.Values.dstack.waitIntervalSeconds | int)) 180 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: squall
+        app.kubernetes.io/component: dstack
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: dstack-fleet
+        image: "{{ .Values.dstack.image.repository }}:{{ .Values.dstack.image.tag }}"
+        imagePullPolicy: {{ .Values.dstack.image.pullPolicy }}
+        env:
+        - name: DSTACK_URL
+          value: "http://dstack.{{ .Values.namespace }}.svc.cluster.local:3000"
+        - name: DSTACK_PROJECT
+          value: {{ .Values.dstack.projectName | quote }}
+        - name: DSTACK_ADMIN_TOKEN
+          value: {{ required "dstack.adminToken is required — see values.yaml's comment on it" .Values.dstack.adminToken | quote }}
+        - name: WAIT_ATTEMPTS
+          value: {{ .Values.dstack.waitAttempts | quote }}
+        - name: WAIT_INTERVAL_SECONDS
+          value: {{ .Values.dstack.waitIntervalSeconds | quote }}
+        volumeMounts:
+        # Whole Secret, not a single subPath: dstack.fleets renders one
+        # fleet-<i>.dstack.yml key per entry (LIVE-7 item 1, plural
+        # fleets), and the count is only known at template render time.
+        - name: fleet-spec
+          mountPath: /etc/dstack
+          readOnly: true
+        command:
+        - sh
+        - -c
+        - |
+          set -eu
+
+          # No naked "until ...; do sleep; done": every wait below is a
+          # bounded loop with an explicit failure exit.
+          wait_for() {
+            desc="$1"; shift
+            i=0
+            while [ "$i" -lt "$WAIT_ATTEMPTS" ]; do
+              if "$@" >/dev/null 2>&1; then
+                echo "ready: $desc"
+                return 0
+              fi
+              i=$((i + 1))
+              sleep "$WAIT_INTERVAL_SECONDS"
+            done
+            echo "FAIL: $desc did not become ready after $WAIT_ATTEMPTS attempts, $WAIT_INTERVAL_SECONDS s apart" >&2
+            return 1
+          }
+
+          server_healthy() {
+            curl -sf -o /dev/null "$DSTACK_URL/healthcheck"
+          }
+
+          fleet_active() {
+            fleet_name="$1"
+            curl -sf -X POST "$DSTACK_URL/api/project/$DSTACK_PROJECT/fleets/get" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $DSTACK_ADMIN_TOKEN" \
+              -d "{\"name\": \"$fleet_name\"}" \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("status")=="active" else 1)'
+          }
+
+          # Applies one fleet spec and waits for it to go active. wait_for's
+          # own FAIL line already names the fleet (passed in as $desc), so a
+          # failure here always says WHICH fleet did not come up, not just
+          # that the Job failed.
+          apply_fleet() {
+            fleet_name="$1"; fleet_file="$2"
+            # `dstack apply`'s configuration loader computes the config path
+            # relative to the CWD (cli/services/configurators/__init__.py)
+            # and raises ValueError if the file isn't under it — cd into the
+            # mounted Secret's directory rather than passing an absolute
+            # path outside the CLI's own tree.
+            ( cd /etc/dstack && dstack apply -f "$fleet_file" -y )
+            wait_for "fleet $fleet_name active" fleet_active "$fleet_name"
+          }
+
+          wait_for "dstack server healthy at $DSTACK_URL" server_healthy
+
+          dstack project add --name "$DSTACK_PROJECT" --url "$DSTACK_URL" --token "$DSTACK_ADMIN_TOKEN" -y
+
+          {{- range $i, $f := .Values.dstack.fleets }}
+          apply_fleet {{ $f.name | quote }} "fleet-{{ $i }}.dstack.yml"
+          {{- end }}
+
+          echo "all {{ len .Values.dstack.fleets }} fleet(s) active"
+      volumes:
+      - name: fleet-spec
+        secret:
+          # Same object as the server's config.yml, which is a Secret because
+          # it carries cloud credentials. The fleet specs themselves are not
+          # sensitive; they just live alongside.
+          secretName: dstack-config

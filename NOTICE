@@ -1,0 +1,17 @@
+Squall (squall.ackstorm.ai/v1alpha1)
+Copyright 2026 ACKstorm
+
+This product includes software developed at ACKstorm under the Apache License, Version 2.0.
+
+Squall's build harness (devtools container, Makefile routing, three-phase test pyramid) is
+derived from the ACKstorm alitellm-operator project, also Apache-2.0.
+
+Squall integrates with the following projects at runtime over their network APIs. It does
+not incorporate their source code:
+
+  - dstack (https://github.com/dstackai/dstack), Mozilla Public License 2.0 — used as the
+    provisioning actuator via its server REST API and gateway.
+  - LiteLLM (https://github.com/BerriAI/litellm), Copyright 2023-2026 BerriAI Inc., MIT —
+    used as the front plane; Squall registers into it via alitellm-operator discovery.
+  - vLLM, llama.cpp and Ollama — invoked as serving engines inside provisioned replicas,
+    by container image reference only.

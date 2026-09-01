@@ -1,0 +1,279 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: squall-manager-role
+rules:
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - get
+  - list
+  - watch
+# D63: spec.secretEnv resolution. get ONLY — the controller reads the one
+# key a Model references and never lists or watches, so it cannot enumerate
+# a namespace's credentials. Keep it that way.
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+- apiGroups:
+  - squall.ackstorm.ai
+  resources:
+  - models
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - squall.ackstorm.ai
+  resources:
+  - models/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - squall.ackstorm.ai
+  resources:
+  - models/status
+  verbs:
+  - get
+  - patch
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: squall-manager-rolebinding
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: squall-manager-role
+subjects:
+- kind: ServiceAccount
+  name: {{ .Values.controller.serviceAccountName }}
+  namespace: {{ .Values.namespace }}
+---
+# permissions to do leader election.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: squall-leader-election-role
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: squall-leader-election-rolebinding
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: squall-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: {{ .Values.controller.serviceAccountName }}
+  namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: squall-metrics-auth-role
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: squall-metrics-auth-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: squall-metrics-auth-role
+subjects:
+- kind: ServiceAccount
+  name: {{ .Values.controller.serviceAccountName }}
+  namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: squall-metrics-reader
+rules:
+- nonResourceURLs:
+  - "/metrics"
+  verbs:
+  - get
+---
+# The following three roles are not used by squall itself — they help
+# cluster admins delegate squall.ackstorm.ai permissions to other users
+# or groups (kubebuilder-scaffolded "admin/editor/viewer" convention).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: squall-model-admin-role
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+rules:
+- apiGroups:
+  - squall.ackstorm.ai
+  resources:
+  - models
+  verbs:
+  - '*'
+- apiGroups:
+  - squall.ackstorm.ai
+  resources:
+  - models/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: squall-model-editor-role
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+rules:
+- apiGroups:
+  - squall.ackstorm.ai
+  resources:
+  - models
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - squall.ackstorm.ai
+  resources:
+  - models/status
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: squall-model-viewer-role
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+rules:
+- apiGroups:
+  - squall.ackstorm.ai
+  resources:
+  - models
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - squall.ackstorm.ai
+  resources:
+  - models/status
+  verbs:
+  - get
+---
+# Minting the replica SSH keypair (EnsureSSHKey). Namespaced ON PURPOSE: the
+# ClusterRole above grants secrets `get` cluster-wide because spec.secretEnv
+# can reference a Secret in any Model's namespace, but CREATE is confined to
+# squall's own namespace — a controller that can mint Secrets anywhere is a
+# far larger blast radius than this feature needs.
+#
+# `create` cannot be narrowed with resourceNames (the object does not exist
+# yet, so there is no name to match against), which is exactly why the verb is
+# confined by namespace instead.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: squall-controller-replica-key
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["squall-replica-ssh-key"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: squall-controller-replica-key
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: squall-controller-replica-key
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.controller.serviceAccountName }}
+    namespace: {{ .Values.namespace }}

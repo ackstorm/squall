@@ -1,0 +1,111 @@
+# Development-only Postgres backing the bundled dstack server, e2e only.
+#
+# Modelled directly on ../ach/config/dev-postgres/postgres_deployment.yaml —
+# same two traps, same fix:
+#
+#   - strategy: Recreate — a single-replica database cannot RollingUpdate;
+#     the new Pod would fight the old one for the same volume.
+#   - subPath: pgdata — Postgres 16 refuses to initialize a non-empty
+#     PGDATA, and emptyDir backends create a `lost+found` directory that
+#     makes it look non-empty. Without the subPath the container crash-loops.
+#
+# emptyDir is correct here (not the PVC dstack's own data uses): the e2e
+# cluster is disposable, and dstack re-runs its alembic migrations against
+# an empty database on every fresh Pod (server/db.py).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: squall-postgres
+  labels:
+    app: postgres
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: database
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/component: database
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          # max_connections is a postmaster START parameter — it cannot be
+          # reloaded, so raising it always costs a restart. 250 is sized from
+          # the chart's dstack.database pool (poolSize + maxOverflow = 200,
+          # see deploy/helm/squall/values.yaml) plus ~50 for dstack's own
+          # background tasks, migrations and admin access.
+          #
+          # MEASURED 2026-08-28 on this exact image, not assumed: 46 live
+          # backends totalled 34MB RSS, i.e. ~0.7MB each. 250 connections is
+          # therefore ~175MB of backends on top of the default 128MB
+          # shared_buffers — which is why the memory limit below moved from
+          # 512Mi to 1Gi. Raising max_connections without raising that limit
+          # trades a connection ceiling for an OOMKill.
+          args:
+            - -c
+            - max_connections=250
+          env:
+            - name: POSTGRES_DB
+              value: dstack
+            - name: POSTGRES_USER
+              value: dstack
+            # Fixed, obviously-fake e2e-only credential — never a real
+            # secret. Matches the house rule on e2e tokens
+            # (test/e2e/cluster/helm-values.yaml's own comment).
+            - name: POSTGRES_PASSWORD
+              value: dstack
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - dstack
+                - -d
+                - dstack
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - dstack
+                - -d
+                - dstack
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              # 1Gi, not 512Mi: see the max_connections comment above — 250
+              # backends measured at ~0.7MB each plus shared_buffers do not
+              # fit in 512Mi.
+              memory: 1Gi
+      volumes:
+        - name: data
+          emptyDir: {}

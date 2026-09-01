@@ -1,0 +1,48 @@
+type: service
+name: squall-vast-probe
+
+# Cross-backend fronting test: the gateway lives on AWS eu-west-1 and this replica
+# lives on a Vast host in Europe. The gateway dials OUT to it over SSH, so this
+# also exercises whether the shared Transit Gateway permits outbound TCP/22 - the
+# marketplace data plane. If that egress is filtered, this fails here.
+#
+# Deliberately the CPU-only llama.cpp image on a GPU host: the question is whether
+# the path works end to end, not how fast a 1B model runs. It also avoids betting
+# on the CUDA driver version of an arbitrary marketplace host.
+image: ghcr.io/ggml-org/llama.cpp:server
+commands:
+  - >
+    /app/llama-server
+    -hf unsloth/Llama-3.2-1B-Instruct-GGUF
+    --hf-file Llama-3.2-1B-Instruct-Q4_K_M.gguf
+    --host 0.0.0.0 --port 8080
+    --metrics
+port: 8080
+
+# The gateway runs `certificate: null`; `https: auto` is refused against it.
+https: false
+
+# Fixed count, no `scaling:` block - the reconciler owns 0<->1, never dstack.
+replicas: 1
+
+resources:
+  gpu: 8GB..24GB
+  cpu: 2..
+  memory: 4GB..
+
+max_price: 0.30
+
+# Dead-man's switch. Enforced by the runner on the instance as a Go context
+# timeout, so it survives this laptop, the server and the network all dying.
+# Counts running state only - provisioning and image pull are excluded.
+max_duration: 30m
+
+backend_options:
+  - type: vastai
+    offer_order: price
+    min_reliability: 0.95
+
+model:
+  type: chat
+  name: llama-3.2-1b-vast
+  format: openai

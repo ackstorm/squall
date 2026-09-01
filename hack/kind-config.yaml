@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Single-node kind cluster for Phase 11 e2e (Task 11.1). Node image is pinned
+# to the same Kubernetes version as ENVTEST_K8S_VERSION (Makefile) so the
+# e2e control plane matches what envtest already validated against.
+apiVersion: kind.x-k8s.io/v1alpha4
+kind: Cluster
+name: squall-test
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.31.0

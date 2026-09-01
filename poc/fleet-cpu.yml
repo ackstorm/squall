@@ -1,0 +1,23 @@
+type: fleet
+name: squall-cpu-fleet
+
+# nodes as a RANGE with min 0: the fleet provisions instances only when a run needs
+# one, and returns to zero when idle. Without a fleet, runs fail outright with
+# failed_to_start_due_to_no_capacity / "No matching fleet found" - in dstack 0.21
+# a run lands on a fleet, it does not provision against a backend directly.
+nodes: 0..1
+
+# Fleet idle_duration defaults to 3d, which would keep a CPU instance billing for
+# three days after the last request. The service replica flipping to 0 does NOT
+# release the underlying instance - the fleet does, and only after this elapses.
+idle_duration: 5m
+
+backends: [aws]
+regions: [eu-west-1]
+
+resources:
+  cpu: 2
+  memory: 4GB
+
+instance_types:
+  - c7i.large
