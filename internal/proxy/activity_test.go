@@ -136,3 +136,35 @@ func TestActivityTracker_FailuresSinceSuccess(t *testing.T) {
 		t.Fatalf("after the reset = %d, want 1", got)
 	}
 }
+
+// TestActivityTracker_DoneAdvancesLastRequestAt is the C4 failure, measured on
+// a live GPU 2026-09-01.
+//
+// Begin stamps lastRequestAt at ACCEPT time (D11, deliberately — an accepted
+// request must never be invisible to the sleep aggregation). Nothing advanced
+// it afterwards, so the stamp aged for the entire time the request was held.
+//
+// A cold wake held one request for 213s. The replica turned Ready, the request
+// was answered, in-flight dropped to 0 — and the anchor the controller reads
+// was already 213s old against a 120s idle window, so the very next reconcile
+// slept the machine. The whole cold start was paid for and thrown away, and the
+// next request paid for it again.
+//
+// Advancing on completion is the safe direction by construction: the anchor only
+// ever moves FORWARD, which can only ever delay a sleep. `1->0` fails safe.
+func TestActivityTracker_DoneAdvancesLastRequestAt(t *testing.T) {
+	start := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	clk := clock.NewFakeClock(start)
+	tr := NewActivityTracker(clk)
+
+	done := tr.Begin("m")
+	clk.Advance(213 * time.Second) // the hold: a real cold start
+	done()
+
+	got := tr.Report().Models["m"].LastRequestAt
+	if !got.Equal(start.Add(213 * time.Second)) {
+		t.Fatalf("LastRequestAt = %v, want %v: an anchor left at accept time is "+
+			"already older than the idle window when a held request finishes, so the "+
+			"model sleeps the instant it becomes useful", got, start.Add(213*time.Second))
+	}
+}

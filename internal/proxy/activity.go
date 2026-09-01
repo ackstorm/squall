@@ -63,8 +63,25 @@ func (t *ActivityTracker) Begin(model string) (done func()) {
 	return func() {
 		once.Do(func() {
 			t.mu.Lock()
+			defer t.mu.Unlock()
 			c.inFlight--
-			t.mu.Unlock()
+			// Advance the anchor to COMPLETION as well as accept. Begin's
+			// accept-time stamp is what guarantees an accepted request is never
+			// invisible to the sleep aggregation (D11); this stops that stamp
+			// from going stale while the request is held.
+			//
+			// MEASURED 2026-09-01 on a live GPU: a cold wake held one request
+			// for 213s. The moment it finished, the anchor was 213s old against
+			// a 120s idle window, so the controller slept the machine
+			// immediately -- the whole cold start bought exactly one answer, and
+			// the next request paid the cold start again.
+			//
+			// The clock is read INSIDE the lock so the anchor cannot move
+			// backwards: reading it outside allows a slow goroutine to overwrite
+			// a newer accept with its own older timestamp. Under the lock the
+			// value is monotonic by construction, so it can only ever DELAY a
+			// sleep -- the direction `1->0 fails safe` requires.
+			c.lastRequestAt = t.clock.Now()
 		})
 	}
 }
