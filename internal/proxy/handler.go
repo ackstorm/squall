@@ -248,6 +248,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// A Model the controller has ruled unschedulable will not become Ready
 	// by waiting. Hold only while something is actually coming up (§7).
 	if action.Block && hasCR && !snap.Schedulable {
+		// Signal demand anyway, before answering. preflight() is the only
+		// writer of the Schedulable condition and it runs on the WAKE path,
+		// which demand is what triggers — so staying silent here closes the
+		// loop on itself: no demand, no wake attempt, no preflight, and the
+		// False that sent us down this branch is never re-evaluated. One
+		// transient backend outage would make a Model unwakeable for good
+		// (MEASURED 2026-09-01: backend restored, still refusing 7m later).
+		//
+		// Refusing to hold is right; refusing to try is `0->1` failing
+		// CLOSED, on the one path the invariant exists for.
+		if action.DemandPatch {
+			h.Demand.Signal(r.Context(), model)
+		}
 		rec.outcome = outcomeWaitContract
 		h.answerWait(w, Action{
 			DeadlineStatus: http.StatusServiceUnavailable,

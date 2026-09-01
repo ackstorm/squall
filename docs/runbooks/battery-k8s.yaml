@@ -1,0 +1,84 @@
+# The FREE battery fixture (owner's call, 2026-09-01): most of squall's safety
+# controls are control-plane logic that does not care whether the replica is a
+# rented GPU or a pod. Running them on the in-cluster kubernetes backend costs
+# nothing, so the vast.ai fixture is reserved for what genuinely needs real
+# hardware — the direct SSH path, real provisioning latency, and price/offer
+# behaviour.
+#
+# Sequence this belongs to: prove and FIX everything here for free, then re-run
+# a confirmation pass on vastai to show the fixes hold on real hardware.
+#
+# Shape copied from test/e2e/cluster/03-fixtures/model.yaml, which is the
+# proven-working kubernetes-backend Model. Timers are the only real difference:
+# the e2e compresses them to single-digit seconds so a suite finishes fast,
+# which is too fast to WATCH a phase transition happen.
+apiVersion: squall.ackstorm.ai/v1alpha1
+kind: Model
+metadata:
+  name: battery-k8s
+  namespace: squall
+spec:
+  # A REAL engine, not a stand-in. The first version of this fixture copied
+  # test/e2e/cluster/03-fixtures/model.yaml: engine llama-cpp, an nginx image,
+  # and no spec.model. That can never reach Ready, and it took a live run to
+  # see why -- engineCommands (engine.go:144) returns nil when spec.model is
+  # empty and spec.args is empty, so squall sends `commands: []`, dstack's shim
+  # replaces the entrypoint and starts NOTHING, and the HTTP probe has no
+  # server to answer it. The run sits in `provisioning` until
+  # provisioningTimeout. (e2e-fixture-model has sat Asleep for 5 days for
+  # exactly this reason.)
+  #
+  # ollama + a 0.5B model runs fine on CPU in kind: free, and it actually
+  # serves OpenAI requests, so activity accounting, the unhealthy verdict and
+  # the drain gate all see real traffic instead of a probe.
+  engine: ollama
+  features:
+    - TextGeneration
+  image: ollama/ollama@sha256:c622a7adec67cf5bd7fe1802b7e26aa583a955a54e91d132889301f50c3e0bd0
+  model: qwen2.5:0.5b
+  args: []
+  env: {}
+  resources:
+    cpu:
+      count: "2.."
+    memory: 4GB..
+    disk: 10GB..
+    gpu:
+      count: "0"
+  probe:
+    # Ollama exposes no /health; its root answers "Ollama is running".
+    path: /
+    interval: 5s
+    readyAfter: 2
+  placement:
+    backends: [kubernetes]
+    regions: []
+    maxPricePerHour: "0.80"
+  minReplicas: 0
+
+  # Timers chosen so each control fires on a human timescale.
+  #
+  # holdTimeout is deliberately NOT above the warm window
+  # (scaleDownDelaySeconds + fleet.idleDuration = 90s): the controller warns
+  # when it is, because most wakes would then pay a full cold start.
+  # holdTimeout MUST exceed the cold start, or the wake is abandoned halfway.
+  # MEASURED 2026-09-01: at holdTimeout 90s with a 60s idle window, the caller's
+  # hold expired mid-provisioning, demand stopped being refreshed, and the
+  # controller flipped an in-progress wake to Asleep at wakeStartedAt + 60s --
+  # throwing away the provisioning work and, on a paid backend, the money spent
+  # on it. The idle clock runs DURING provisioning: with no replica yet there is
+  # no activity data, so sleepDue anchors on status.lastRequestAt, which the
+  # controller advances to wakeStartedAt.
+  holdTimeout: 4m
+  scaleDownDelaySeconds: 120
+  fleet:
+    idleDuration: 60s
+  drainTimeout: 30s
+  provisioningTimeout: 10m
+  # Explicit, not the min(4*idle+15m, 2h) default, which would be 19m here —
+  # too long to sit through once per uncontrolled scenario.
+  uncontrolledTimeout: 3m
+  health:
+    unhealthyAfter: 2m
+    failureThreshold: 3
+  maxLifetime: 168h

@@ -31,6 +31,14 @@ type noopPatcher struct{}
 
 func (noopPatcher) PatchDemand(context.Context, string, time.Time) error { return nil }
 
+// countingPatcher records how many demand patches actually reached the API.
+type countingPatcher struct{ n *int32 }
+
+func (c countingPatcher) PatchDemand(context.Context, string, time.Time) error {
+	atomic.AddInt32(c.n, 1)
+	return nil
+}
+
 func newHandler(t *testing.T, cache *ModelCache, backendTarget *url.URL) *Handler {
 	t.Helper()
 	return &Handler{
@@ -574,6 +582,60 @@ func TestServeHTTP_UnschedulableAnswersImmediately(t *testing.T) {
 	}
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
+// TestServeHTTP_UnschedulableStillSignalsDemand is the other half of
+// TestServeHTTP_UnschedulableAnswersImmediately, and it exists because those
+// two behaviours were in direct conflict.
+//
+// preflight() — the ONLY thing that ever rewrites the Schedulable condition —
+// runs on the wake path (model_controller.go), and the wake path is reached
+// only when demand exists. So refusing to signal demand for an unschedulable
+// Model closes the loop on itself: no demand, no wake attempt, no preflight,
+// and the stale False that started it is never revisited.
+//
+// MEASURED 2026-09-01: a helm upgrade dropped the vastai backend (D67), every
+// Model went Schedulable=False, and restoring the backend did not bring them
+// back — 7 minutes after the backend answered config_info with 200 again, the
+// Model was still refusing to wake, and would have refused forever.
+//
+// Not holding the caller is right (that is the test above). Not telling the
+// controller anything happened is what makes it permanent, and it inverts the
+// project's `0->1 fails open` invariant on the one path that invariant is about.
+func TestServeHTTP_UnschedulableStillSignalsDemand(t *testing.T) {
+	var patched int32
+	cache := NewCache()
+	cache.Set("m", ModelSnapshot{
+		Phase:       squallv1alpha1.ModelPhaseAsleep,
+		HoldTimeout: time.Hour,
+		Schedulable: false,
+	})
+	h := &Handler{
+		Cache:    cache,
+		Demand:   NewDemandCoalescer(countingPatcher{n: &patched}, time.Minute, nil),
+		Activity: NewActivityTracker(nil),
+	}
+
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+			strings.NewReader(`{"model":"m","messages":[]}`)))
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("held an unschedulable model; caller should be told, not stalled")
+	}
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	if got := atomic.LoadInt32(&patched); got != 1 {
+		t.Fatalf("demand patches = %d, want 1: without one, preflight never re-runs and "+
+			"Schedulable=False can never be cleared by a caller", got)
 	}
 }
 
