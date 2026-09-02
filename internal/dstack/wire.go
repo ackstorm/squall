@@ -255,13 +255,17 @@ type serviceWire struct {
 }
 
 type runWire struct {
-	ID            string       `json:"id"`
-	SubmittedAt   time.Time    `json:"submitted_at"`
-	Status        string       `json:"status"`
-	DeploymentNum int          `json:"deployment_num"`
-	Jobs          []jobWire    `json:"jobs"`
-	Service       *serviceWire `json:"service"`
-	RunSpec       struct {
+	ID                  string             `json:"id"`
+	SubmittedAt         time.Time          `json:"submitted_at"`
+	Status              string             `json:"status"`
+	StatusMessage       string             `json:"status_message"`
+	TerminationReason   string             `json:"termination_reason"`
+	Error               string             `json:"error"`
+	DeploymentNum       int                `json:"deployment_num"`
+	Jobs                []jobWire          `json:"jobs"`
+	LatestJobSubmission *jobSubmissionWire `json:"latest_job_submission"`
+	Service             *serviceWire       `json:"service"`
+	RunSpec             struct {
 		RunName       string `json:"run_name"`
 		Configuration struct {
 			Replicas replicasWire `json:"replicas"`

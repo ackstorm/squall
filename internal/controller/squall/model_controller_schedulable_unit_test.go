@@ -167,6 +167,83 @@ func TestReconcile_InvalidPrice_RefusesToProvision(t *testing.T) {
 	}
 }
 
+func TestReconcile_TerminalRunReportsProvisioningFailure(t *testing.T) {
+	model := pinnedColdModel("failed-provision", nil)
+	model.Status.RunID = "failed-run"
+	model.Status.Phase = squallv1alpha1.ModelPhaseWaking
+	dc := &schedulableDstackClient{
+		backendConfigured: true,
+		hasFleet:          true,
+		getRun: &dstack.Run{
+			Name: "failed-provision", RunID: "failed-run", Status: "failed",
+			ProvisioningFailure: &dstack.ProvisioningFailure{
+				RunID: "failed-run", Reason: "failed_to_start_due_to_no_capacity",
+				Message: `{"error":"insufficient_credit"}: 429 Too Many Requests`,
+			},
+		},
+		applyRun: &dstack.Run{Name: "failed-provision", RunID: "replacement-run", Replicas: 1},
+	}
+
+	got := reconcileSchedulableFixture(t, model, dc)
+
+	cond := meta.FindStatusCondition(got.Status.Conditions, "Provisioning")
+	if cond == nil {
+		t.Fatal("Provisioning condition not set")
+	}
+	if cond.Status != metav1.ConditionFalse || cond.Reason != "InsufficientCredit" {
+		t.Fatalf("Provisioning condition = %+v, want False/InsufficientCredit", cond)
+	}
+	if !strings.Contains(cond.Message, "failed-run") || !strings.Contains(cond.Message, "insufficient_credit") {
+		t.Fatalf("condition message = %q, want failed run and dstack cause", cond.Message)
+	}
+}
+
+func TestReconcile_ReadyRunClearsProvisioningFailure(t *testing.T) {
+	model := pinnedColdModel("recovered-provision", nil)
+	model.Status.RunID = "replacement-run"
+	model.Status.Phase = squallv1alpha1.ModelPhaseRecreating
+	meta.SetStatusCondition(&model.Status.Conditions, metav1.Condition{
+		Type: "Provisioning", Status: metav1.ConditionFalse, Reason: "NoCapacity",
+	})
+	dc := &schedulableDstackClient{
+		getRun: &dstack.Run{
+			Name: "recovered-provision", RunID: "replacement-run", Status: "running",
+			Replicas: 1, ProbesReady: true,
+		},
+	}
+
+	got := reconcileSchedulableFixture(t, model, dc)
+
+	cond := meta.FindStatusCondition(got.Status.Conditions, "Provisioning")
+	if cond == nil || cond.Status != metav1.ConditionTrue || cond.Reason != "Provisioned" {
+		t.Fatalf("Provisioning condition = %+v, want True/Provisioned", cond)
+	}
+}
+
+func TestReportProvisioningConditionClassifiesFailure(t *testing.T) {
+	tests := []struct {
+		name    string
+		failure dstack.ProvisioningFailure
+		want    string
+	}{
+		{name: "credit", failure: dstack.ProvisioningFailure{Reason: "failed_to_start_due_to_no_capacity", Message: "insufficient_credit"}, want: squallv1alpha1.ReasonInsufficientCredit},
+		{name: "capacity", failure: dstack.ProvisioningFailure{Reason: "failed_to_start_due_to_no_capacity"}, want: squallv1alpha1.ReasonNoCapacity},
+		{name: "rate limit", failure: dstack.ProvisioningFailure{Message: "429 Too Many Requests"}, want: squallv1alpha1.ReasonBackendRateLimited},
+		{name: "other", failure: dstack.ProvisioningFailure{Reason: "server_error"}, want: squallv1alpha1.ReasonProvisioningFailed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := &squallv1alpha1.Model{}
+			reportProvisioningCondition(model, &tt.failure, squallv1alpha1.ModelPhaseDead)
+			cond := meta.FindStatusCondition(model.Status.Conditions, squallv1alpha1.ConditionProvisioning)
+			if cond == nil || cond.Reason != tt.want {
+				t.Fatalf("Provisioning condition = %+v, want reason %s", cond, tt.want)
+			}
+		})
+	}
+}
+
 // TestReconcile_InvalidPrice_DoesNotBlockSleep is I2(a), block 2 review: the
 // price gate's veto (action.Apply = false) must never reach a 1->0 sleep.
 // checkSchedulable is only entered on a wake (model_controller.go's

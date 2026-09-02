@@ -16,8 +16,17 @@ out explicitly, because that is the class of change worth reading twice.
 - `dstack.adminToken` now uses Kubernetes' native `value`/`valueFrom` shape;
   existing scalar values must move to `dstack.adminToken.value`.
 - Updated the bundled dstack server from 0.21.2 to 0.21.3.
-- Reordered the Model's default printer columns to Engine, Run, Phase,
-  Schedulable, Fleet, Age.
+- Reordered the Model's default printer columns to Backend, Engine, Run,
+  Phase, Schedulable, Fleet, Age.
+- Documented the operator/backend and Model placement policy boundary for
+  Vast.ai, including canonical regions, Community Cloud and Secret-backed
+  credentials.
+
+### Fixed
+
+- Terminal dstack provisioning failures now remain visible on the Model's
+  `Provisioning` condition, including credit, capacity and rate-limit causes,
+  until a replacement reaches Ready.
 
 ## [0.1.2] — 2026-09-02
 

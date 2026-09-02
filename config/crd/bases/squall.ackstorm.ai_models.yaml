@@ -15,6 +15,9 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .spec.placement.backends[*]
+      name: Backend
+      type: string
     - jsonPath: .spec.engine
       name: Engine
       type: string

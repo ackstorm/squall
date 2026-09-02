@@ -152,8 +152,28 @@ dstack:
       creds:
         type: api_key
         api_key: ${VAST_API_KEY}
-      regions: [ES, IT, NL]
+      # Operator policy: the widest infrastructure scope Models may use.
+      regions: [es-spain, pt-portugal, fr-france, it-italy, de-germany,
+                nl-netherlands, be-belgium, at-austria, ch-switzerland,
+                pl-poland, cz-czechia, se-sweden, fi-finland, no-norway]
+      # Optional: false excludes individually operated Community Cloud hosts.
+      # community_cloud: false
 ```
+
+`dstack.backends[].regions` is the cluster operator's allow-list. A Model author can
+narrow it with `spec.placement.regions`, but cannot widen it: dstack first restricts the
+backend catalogue and then applies the Model profile, so the effective set is their
+intersection. Vast.ai regions use dstack/gpuhunt's canonical names such as `es-spain`,
+not ISO codes such as `ES`.
+
+`community_cloud` also belongs to the Vast.ai backend, not the Model. dstack defaults it
+to `true`; setting it to `false` excludes individual operators and may improve the trust
+profile at the cost of fewer offers. Both pools are third-party marketplace capacity, so
+this switch is not a substitute for a workload security or compliance policy.
+
+Create `vast-credentials` in the chart namespace with a `VAST_API_KEY` key. The chart
+imports that Secret as environment variables and replaces `${VAST_API_KEY}` in the
+backend config before dstack starts; the credential does not belong in `values.yaml`.
 
 > **Helm never upgrades CRDs.** Files under a chart's `crds/` directory are applied on
 > install and ignored on every upgrade. After a version bump, apply the CRD yourself — it
@@ -192,7 +212,7 @@ spec:
 
   placement:
     backends: [vastai]           # only backends named here AND in the chart are eligible
-    regions: [ES, IT, NL]
+    regions: [es-spain, fr-france, nl-netherlands] # narrower than operator policy
     maxPricePerHour: "0.80"      # quoted — an unquoted float fails CRD validation
 
   fleet:

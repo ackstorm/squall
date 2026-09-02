@@ -16,10 +16,14 @@ type probeWire struct {
 
 // jobSubmissionWire is one attempt at running one replica.
 type jobSubmissionWire struct {
-	SubmittedAt   time.Time   `json:"submitted_at"`
-	DeploymentNum int         `json:"deployment_num"`
-	Status        string      `json:"status"`
-	Probes        []probeWire `json:"probes"`
+	SubmittedAt              time.Time   `json:"submitted_at"`
+	DeploymentNum            int         `json:"deployment_num"`
+	Status                   string      `json:"status"`
+	StatusMessage            string      `json:"status_message"`
+	TerminationReason        string      `json:"termination_reason"`
+	TerminationReasonMessage string      `json:"termination_reason_message"`
+	Error                    string      `json:"error"`
+	Probes                   []probeWire `json:"probes"`
 
 	// JobProvisioningData is where the replica actually runs. Measured on a
 	// live Vast.ai run: hostname 79.161.156.12, ssh_port 40097, username

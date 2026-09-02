@@ -29,6 +29,10 @@ const (
 	// docs/references/deviations-and-findings.md (Gap A, block 2 review).
 	ConditionSchedulable = "Schedulable"
 
+	// ConditionProvisioning reports the latest terminal dstack attempt. It is
+	// False from a failed attempt until a replacement reaches Ready.
+	ConditionProvisioning = "Provisioning"
+
 	// ConditionServedModelVerified is True once the replica's own
 	// GET /v1/models confirmed it serves this Model's name (D65).
 	ConditionServedModelVerified = "ServedModelVerified"
@@ -96,6 +100,11 @@ const (
 	// run's verdict would be a statement about a different machine.
 	ReasonHealthy             = "Healthy"
 	ReasonProvisioningTimeout = "ProvisioningTimeout"
+	ReasonProvisioned         = "Provisioned"
+	ReasonInsufficientCredit  = "InsufficientCredit"
+	ReasonNoCapacity          = "NoCapacity"
+	ReasonBackendRateLimited  = "BackendRateLimited"
+	ReasonProvisioningFailed  = "ProvisioningFailed"
 )
 
 const (

@@ -337,6 +337,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				"model", model.Name, "priorRunId", model.Status.RunID)
 		}
 	}
+	reportProvisioningCondition(&model, observed.ProvisioningFailure, newPhase)
 
 	if action.Unhealthy {
 		// LOUD. This spent money and then stopped spending it; an operator who
@@ -546,6 +547,39 @@ func reportProvisioningTimeout(logger logr.Logger, action Action, model *squallv
 		Type: squallv1alpha1.ConditionHealthy, Status: metav1.ConditionFalse,
 		Reason:  squallv1alpha1.ReasonProvisioningTimeout,
 		Message: "provisioning deadline exceeded before the replica became Ready",
+	})
+}
+
+func reportProvisioningCondition(model *squallv1alpha1.Model, failure *dstack.ProvisioningFailure, phase squallv1alpha1.ModelPhase) {
+	if failure == nil {
+		if phase == squallv1alpha1.ModelPhaseReady {
+			meta.SetStatusCondition(&model.Status.Conditions, metav1.Condition{
+				Type: squallv1alpha1.ConditionProvisioning, Status: metav1.ConditionTrue,
+				Reason: squallv1alpha1.ReasonProvisioned,
+			})
+		}
+		return
+	}
+
+	detail := strings.TrimSpace(failure.Message)
+	if detail == "" {
+		detail = failure.Reason
+	}
+	text := strings.ToLower(failure.Reason + " " + detail)
+	reason := squallv1alpha1.ReasonProvisioningFailed
+	switch {
+	case strings.Contains(text, "insufficient_credit"), strings.Contains(text, "insufficient credit"):
+		reason = squallv1alpha1.ReasonInsufficientCredit
+	case strings.Contains(text, "429"), strings.Contains(text, "too many requests"), strings.Contains(text, "rate limit"):
+		reason = squallv1alpha1.ReasonBackendRateLimited
+	case strings.Contains(text, "no_capacity"), strings.Contains(text, "no capacity"):
+		reason = squallv1alpha1.ReasonNoCapacity
+	}
+	meta.SetStatusCondition(&model.Status.Conditions, metav1.Condition{
+		Type:    squallv1alpha1.ConditionProvisioning,
+		Status:  metav1.ConditionFalse,
+		Reason:  reason,
+		Message: fmt.Sprintf("dstack run %s: %s", failure.RunID, detail),
 	})
 }
 
@@ -838,7 +872,11 @@ func (r *ModelReconciler) observe(ctx context.Context, runName, activityKey stri
 		return Observed{}, err
 	}
 	if run.IsTerminal() {
-		return Observed{}, nil
+		failure := run.ProvisioningFailure
+		if failure == nil {
+			failure = &dstack.ProvisioningFailure{RunID: run.RunID, Reason: run.Status}
+		}
+		return Observed{ProvisioningFailure: failure}, nil
 	}
 
 	observed := Observed{Run: run}

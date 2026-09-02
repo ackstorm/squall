@@ -279,12 +279,25 @@ type Run struct {
 	// the run and SubmittedAt dates from its first creation.
 	SubmittedAt time.Time
 
+	// ProvisioningFailure is dstack's terminal diagnosis for the latest job
+	// submission. nil means the run is live or dstack supplied no diagnosis.
+	ProvisioningFailure *ProvisioningFailure
+
 	// raw is the verbatim JSON dstack returned for this run. It exists ONLY
 	// to be handed back as apply's `current_resource`: the CAS compares the
 	// whole object, so any field we drop on decode would corrupt the
 	// comparison. Never read it for state — that is what the typed fields
 	// above are for.
 	raw json.RawMessage
+}
+
+// ProvisioningFailure preserves the useful part of a terminal dstack run so
+// the controller can expose it on the Model instead of folding it into a
+// reasonless "run absent" observation.
+type ProvisioningFailure struct {
+	RunID   string
+	Reason  string
+	Message string
 }
 
 // finishedRunStatuses mirrors dstack's own finished_statuses() (§7,

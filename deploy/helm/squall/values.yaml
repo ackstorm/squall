@@ -208,10 +208,14 @@ dstack:
   #       creds:
   #         type: api_key
   #         api_key: ${VAST_API_KEY}   # from credentialsSecretName
-  #       # Optional. Omit for all regions. These are Vast's own location
-  #       # strings — there is no "europe" grouping, dstack matches them
-  #       # exactly (server/services/offers.py).
-  #       regions: [ES, IT, NL]
+  #       # Optional operator allow-list. Omit for all regions. These are
+  #       # dstack/gpuhunt's canonical location names — there is no "europe"
+  #       # grouping, and ISO codes such as ES match nothing. A Model's
+  #       # placement.regions can only narrow this list; the effective set is
+  #       # their intersection.
+  #       regions: [es-spain, pt-portugal, fr-france, it-italy, de-germany,
+  #       #           nl-netherlands, be-belgium, at-austria, ch-switzerland,
+  #       #           pl-poland, cz-czechia, se-sweden, fi-finland, no-norway]
   #       # Optional. LEFT OMITTED here deliberately — do not uncomment this
   #       # to `false` without measuring first. dstack's own default is
   #       # `true` (core/backends/vastai/models.py: VASTAI_COMMUNITY_CLOUD_

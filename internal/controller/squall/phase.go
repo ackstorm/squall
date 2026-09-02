@@ -26,6 +26,11 @@ type Observed struct {
 	// "dead is not asleep" dispatch unchanged.
 	Run *dstack.Run
 
+	// ProvisioningFailure is the diagnosis from a terminal run that was
+	// folded out of Run so the existing dead/recreate state machine stays
+	// unchanged.
+	ProvisioningFailure *dstack.ProvisioningFailure
+
 	// Ready is engine-health evidence (§6) that promotes Waking or
 	// Recreating to Ready. A running dstack job is never enough by itself:
 	// callers set this from dstack's probe state or a fresh successful

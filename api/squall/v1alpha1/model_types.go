@@ -711,6 +711,7 @@ type ModelStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Backend",type=string,JSONPath=`.spec.placement.backends[*]`
 // +kubebuilder:printcolumn:name="Engine",type=string,JSONPath=`.spec.engine`
 // +kubebuilder:printcolumn:name="Run",type=string,JSONPath=`.status.runId`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`

@@ -259,6 +259,39 @@ func TestClient_Get_TerminalRun_ReportsStatusNotErrNotFound(t *testing.T) {
 	}
 }
 
+func TestClient_Get_DecodesTerminalProvisioningFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"failed-run","status":"failed","deployment_num":2,
+			"status_message":"Failed to start job",
+			"termination_reason":"job_failed",
+			"latest_job_submission":{
+				"deployment_num":2,"status":"failed",
+				"termination_reason":"failed_to_start_due_to_no_capacity",
+				"termination_reason_message":"{\"error\":\"insufficient_credit\"}: 429 Too Many Requests"
+			},
+			"jobs":[],
+			"run_spec":{"run_name":"qwen","configuration":{"replicas":{"min":0,"max":0}}}
+		}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	run, err := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client()).Get(context.Background(), "qwen")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if run.ProvisioningFailure == nil {
+		t.Fatal("ProvisioningFailure = nil, want latest terminal job failure")
+	}
+	if run.ProvisioningFailure.RunID != "failed-run" ||
+		run.ProvisioningFailure.Reason != "failed_to_start_due_to_no_capacity" ||
+		run.ProvisioningFailure.Message != `{"error":"insufficient_credit"}: 429 Too Many Requests` {
+		t.Fatalf("ProvisioningFailure = %+v", run.ProvisioningFailure)
+	}
+}
+
 // TestClient_Get_Success proves Get reflects live state over the wire.
 // TestClient_Get_ReadsReplicasFromMin covers an asymmetric {min,max} that
 // squall's own fixed-replica client never produces but a real server's

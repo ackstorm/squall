@@ -335,20 +335,46 @@ func decodeRun(body []byte) (*Run, error) {
 		return nil, fmt.Errorf("dstack: decode run: %w", err)
 	}
 	return &Run{
-		Name:          w.RunSpec.RunName,
-		RunID:         w.ID,
-		DeploymentNum: w.DeploymentNum,
-		Replicas:      w.RunSpec.Configuration.Replicas.Min,
-		ServiceURL:    serviceURL(w.Service),
-		Replica:       replicaEndpoint(w.Jobs, w.DeploymentNum),
-		PricePerHour:  replicaPricePerHour(w.Jobs, w.DeploymentNum),
-		ProbesReady:   probesReady(w.Jobs, w.DeploymentNum, echoedReadyAfter(w)),
-		Env:           w.RunSpec.Configuration.Env,
-		SSHKeyPub:     w.RunSpec.SSHKeyPub,
-		Status:        w.Status,
-		SubmittedAt:   w.SubmittedAt,
-		raw:           append(json.RawMessage(nil), body...),
+		Name:                w.RunSpec.RunName,
+		RunID:               w.ID,
+		DeploymentNum:       w.DeploymentNum,
+		Replicas:            w.RunSpec.Configuration.Replicas.Min,
+		ServiceURL:          serviceURL(w.Service),
+		Replica:             replicaEndpoint(w.Jobs, w.DeploymentNum),
+		PricePerHour:        replicaPricePerHour(w.Jobs, w.DeploymentNum),
+		ProbesReady:         probesReady(w.Jobs, w.DeploymentNum, echoedReadyAfter(w)),
+		Env:                 w.RunSpec.Configuration.Env,
+		SSHKeyPub:           w.RunSpec.SSHKeyPub,
+		Status:              w.Status,
+		SubmittedAt:         w.SubmittedAt,
+		ProvisioningFailure: decodeProvisioningFailure(w),
+		raw:                 append(json.RawMessage(nil), body...),
 	}, nil
+}
+
+func decodeProvisioningFailure(w runWire) *ProvisioningFailure {
+	if !finishedRunStatuses[w.Status] {
+		return nil
+	}
+	reason, message := w.TerminationReason, w.StatusMessage
+	if message == "" {
+		message = w.Error
+	}
+	if s := w.LatestJobSubmission; s != nil {
+		if s.TerminationReason != "" {
+			reason = s.TerminationReason
+		}
+		for _, candidate := range []string{s.TerminationReasonMessage, s.StatusMessage, s.Error} {
+			if candidate != "" {
+				message = candidate
+				break
+			}
+		}
+	}
+	if reason == "" && message == "" {
+		return nil
+	}
+	return &ProvisioningFailure{RunID: w.ID, Reason: reason, Message: message}
 }
 
 func serviceURL(s *serviceWire) string {
