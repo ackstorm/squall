@@ -53,7 +53,17 @@ runs:
     - name: Pull pre-built devtools image (best-effort)
       shell: bash
       run: |
-        if docker pull "${{ steps.ref.outputs.image }}" 2>/dev/null; then
+        pulled=false
+        for attempt in 1 2 3; do
+          if docker pull "${{ steps.ref.outputs.image }}"; then
+            pulled=true
+            break
+          fi
+          echo "::warning::Devtools image pull failed (attempt $attempt/3)"
+          if [ "$attempt" -lt 3 ]; then sleep "$attempt"; fi
+        done
+
+        if [ "$pulled" = true ]; then
           docker tag "${{ steps.ref.outputs.image }}" squall-devtools:latest
           got=$(docker image inspect -f '{{index .Config.Labels "squall.dockerfile.sha"}}' squall-devtools:latest 2>/dev/null || true)
           if [ "$got" = "${{ steps.ref.outputs.full_sha }}" ]; then

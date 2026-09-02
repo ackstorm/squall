@@ -95,15 +95,8 @@ doctor: ## Fast local preflight: docker, devtools image, socket, cache paths, in
 	@for d in .gocache/gopath .gocache/build .gocache/envtest .gocache/kube; do test -d "$$d" && echo "OK   $$d" || echo "WARN $$d missing (created on first dev.sh run)"; done
 	@test -f go.mod && echo "OK   go.mod present" || echo "INFO no go.mod yet (kubebuilder scaffold = plan Phase 2)"
 	@./scripts/dev.sh bash -c '\
-	  for t in go kubebuilder controller-gen setup-envtest kind helm kubectl govulncheck; do \
+	  for t in go kubebuilder controller-gen setup-envtest kind helm kubectl govulncheck golangci-lint; do \
 	    command -v $$t >/dev/null 2>&1 && echo "OK   (container) $$t" || echo "FAIL (container) $$t MISSING"; \
-	  done; \
-	  for t in golangci-lint; do \
-	    if command -v $$t >/dev/null 2>&1 || test -x /workspace/bin/$$t; then \
-	      echo "OK   (container) $$t (baked or installed-on-demand)"; \
-	    else \
-	      echo "INFO (container) $$t not yet installed (go-installed on first lint into ./bin)"; \
-	    fi; \
 	  done; \
 	  test -d "$$ENVTEST_BIN_DIR/k8s" && echo "OK   (container) envtest assets in $$ENVTEST_BIN_DIR" || echo "WARN (container) no pre-baked envtest assets"'
 	@test -f .gocache/kube/config && echo "OK   kubeconfig present (.gocache/kube/config)" || echo "INFO no kubeconfig yet (run make cluster-up)"
@@ -263,19 +256,14 @@ $(LOCALBIN):
 	mkdir -p $(LOCALBIN)
 
 ## Tool binaries.
-# controller-gen and setup-envtest are BAKED into the devtools image
+# controller-gen, setup-envtest and golangci-lint are BAKED into the devtools image
 # under /usr/local/bin (Dockerfile.devtools sets GOBIN=/usr/local/bin), pinned
-# there by ARG. The bare name therefore resolves on PATH in every context these
-# targets actually run in — inside the container. golangci-lint is deliberately
-# not baked (it churns faster than the rest of the toolchain); it is go-installed
-# on demand into $(LOCALBIN) by go-install-tool.
+# there by ARG. The bare names therefore resolve on PATH in every context these
+# targets actually run in — inside the container.
 KUBECTL ?= kubectl
 CONTROLLER_GEN ?= controller-gen
 ENVTEST ?= setup-envtest
-GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
-
-## Tool versions.
-GOLANGCI_LINT_VERSION ?= v1.62.2
+GOLANGCI_LINT ?= golangci-lint
 
 # ENVTEST_K8S_VERSION is pinned by Dockerfile.devtools (ARG ENVTEST_K8S_VERSION)
 # and exported into the container environment. An environment variable already
@@ -305,26 +293,8 @@ setup-envtest: ## Resolve the ENVTEST binaries (pre-baked assets first, download
 	}
 
 .PHONY: golangci-lint
-golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
-$(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
-
-# go-install-tool will 'go install' any package with custom target and name of
-# binary, if it doesn't exist.
-# $1 - target path with name of binary
-# $2 - package url which can be installed
-# $3 - specific version of package
-define go-install-tool
-@[ -f "$(1)-$(3)" ] || { \
-set -e; \
-package=$(2)@$(3) ;\
-echo "Downloading $${package}" ;\
-rm -f $(1) || true ;\
-GOBIN=$(LOCALBIN) go install $${package} ;\
-mv $(1) $(1)-$(3) ;\
-} ;\
-ln -sf $(1)-$(3) $(1)
-endef
+golangci-lint: ## Verify the devtools image provides golangci-lint.
+	@command -v $(GOLANGCI_LINT) >/dev/null
 
 ##@ Packaging & Sync
 

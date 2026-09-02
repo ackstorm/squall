@@ -31,6 +31,7 @@ ARG ENVTEST_K8S_VERSION=1.31.0
 ARG KIND_VERSION=v0.25.0
 ARG HELM_VERSION=v3.16.3
 ARG GOVULNCHECK_VERSION=v1.3.0
+ARG GOLANGCI_LINT_VERSION=v1.62.2
 
 # Build-scoped only (ARG, not ENV): this image is meant to be `bash`ed into, and
 # a baked-in DEBIAN_FRONTEND=noninteractive would silently skip prompts for
@@ -82,7 +83,8 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && chmod +x /usr/local/bin/kubectl \
     && kubectl version --client
 
-# controller-gen, kustomize, setup-envtest via go install -> /usr/local/bin (GOBIN)
+# controller-gen, kustomize, setup-envtest and golangci-lint via go install ->
+# /usr/local/bin (GOBIN)
 #
 # The module and build caches are BuildKit cache mounts, not image layers: none
 # of it is reachable at runtime anyway (scripts/dev.sh overrides GOPATH,
@@ -92,7 +94,8 @@ RUN ARCH="$(dpkg --print-architecture)" \
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     go install sigs.k8s.io/controller-tools/cmd/controller-gen@${CONTROLLER_GEN_VERSION} \
     && go install sigs.k8s.io/kustomize/kustomize/v5@${KUSTOMIZE_VERSION} \
-    && go install sigs.k8s.io/controller-runtime/tools/setup-envtest@${SETUP_ENVTEST_VERSION}
+    && go install sigs.k8s.io/controller-runtime/tools/setup-envtest@${SETUP_ENVTEST_VERSION} \
+    && go install github.com/golangci/golangci-lint/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}
 
 # govulncheck — installed straight under the image's pinned toolchain.
 # (Previously needed GOTOOLCHAIN=auto when the base image was Go 1.24
