@@ -8,7 +8,7 @@
 #
 # Used by everything in Squall — nothing builds or tests outside it.
 
-FROM golang:1.26.6-bookworm
+FROM golang:1.27.1-bookworm
 
 # Use bash with pipefail for all RUN directives — abort on any failure in a
 # pipeline (e.g. `curl ... | tar ...`). POSIX sh swallows the curl exit code
