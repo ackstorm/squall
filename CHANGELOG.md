@@ -13,6 +13,26 @@ out explicitly, because that is the class of change worth reading twice.
 
 Nothing yet.
 
+## [0.1.4] — 2026-09-02
+
+### Added
+
+- The chart now ships the Prometheus alert rules, behind
+  `prometheusRule.enabled` (off by default; needs the Prometheus Operator
+  CRDs). `spec.maxLifetime` is ALERT-ONLY by design — nothing in the
+  controller stops a Model that never goes idle — so until now a chart-only
+  install had no ceiling of any kind: the rules existed solely in
+  `config/prometheus/rules.yaml`, which nothing installed.
+- Three alerts for guardrails the controller deliberately does not enforce:
+  `SquallModelProvisioningRetryLoop` (a wake that never lands is destroyed at
+  `provisioningTimeout`, but demand re-arms the next one and each attempt
+  rents a machine until the deadline), `SquallModelUncontrolledApproachingDeadline`
+  (fires at half the deadline, so a proxy outage is visible before the
+  uncontrolled flip acts on it) and `SquallModelCapacityWhileNotReady`
+  (a run is active while the Model cannot serve — capacity that still bills).
+- `make helm-sync` now syncs the rules into the chart, so the shipped alerts
+  cannot drift from the ones `config/prometheus/rules.yaml` declares.
+
 ## [0.1.3] — 2026-09-02
 
 ### Added
@@ -141,7 +161,8 @@ order to run this safely are listed.
   so a Model verified before upgrading keeps it empty until its run generation
   is replaced. Empty means "do not rewrite", which is the safe direction.
 
-[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/ackstorm/squall/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/ackstorm/squall/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/ackstorm/squall/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ackstorm/squall/compare/v0.1.0...v0.1.1
