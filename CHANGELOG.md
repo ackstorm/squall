@@ -13,6 +13,35 @@ out explicitly, because that is the class of change worth reading twice.
 
 Nothing yet.
 
+## [0.1.1] — 2026-09-02
+
+### Added
+
+- The chart exposes the controller metrics endpoint by default.
+- Added measured deployment notes for Qwen3.8-27B and an unverified
+  GLM-5.3-Flash four-GPU sample.
+
+### Changed
+
+- Removed unused Kubebuilder/Kustomize deployment scaffolding; Helm remains
+  the deployment path.
+- Reworked the README around the supported install and operating workflow.
+
+### Fixed
+
+- Fresh bundled-dstack installs now reuse `dstack.adminToken` for Squall's
+  dstack clients, wire scale-to-zero to the chart-managed proxy Service, and
+  discover the SSH jump NodePort host through the Downward API instead of
+  requiring a node IP in values.
+- Unschedulable requests still signal demand, allowing a changed Model to be
+  reconsidered, while retaining the immediate response contract.
+- A request held during wake now advances the idle anchor when it completes,
+  preventing premature scale-down.
+- `status.fleet` no longer invents an auto-fleet name when an existing fleet
+  is the one admitting the backend.
+- Corrected the quickstart namespace, public-artifact guidance, warm-window
+  values, and Model resource schema example.
+
 ## [0.1.0] — 2026-09-01
 
 First tagged release. Everything below is the initial implementation rather
@@ -78,5 +107,6 @@ order to run this safely are listed.
   so a Model verified before upgrading keeps it empty until its run generation
   is replaced. Empty means "do not rewrite", which is the safe direction.
 
-[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/ackstorm/squall/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ackstorm/squall/releases/tag/v0.1.0

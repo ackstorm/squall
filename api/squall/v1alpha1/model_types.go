@@ -562,8 +562,11 @@ type FleetStatus struct {
 	// Backend is the dstack backend name, e.g. "vastai".
 	Backend string `json:"backend"`
 
-	// Name is the fleet squall looked for or created (dstack.FleetName).
-	// Empty when the backend is not configured.
+	// Name is the fleet squall created (dstack.FleetName). Empty when the
+	// backend is not configured, and empty on Admitting: dstack only reports
+	// THAT some active fleet admits the backend, not which one, and naming
+	// the auto fleet here misled operators whose own declared fleet was the
+	// one admitting (D149).
 	// +optional
 	Name string `json:"name,omitempty"`
 

@@ -135,6 +135,11 @@ spec:
       - name: render-config
         image: "{{ .Values.dstack.image.repository }}:{{ .Values.dstack.image.tag }}"
         imagePullPolicy: {{ .Values.dstack.image.pullPolicy }}
+        env:
+        - name: DSTACK_PROXY_JUMP_HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
         {{- if .Values.dstack.credentialsSecretName }}
         # Every key of the user's Secret becomes an env var, so a backend
         # block can reference it as ${KEY}. The Secret is NOT managed by this

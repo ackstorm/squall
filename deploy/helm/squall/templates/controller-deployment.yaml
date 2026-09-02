@@ -63,10 +63,15 @@ spec:
           - name: SQUALL_DSTACK_PROJECT
             value: {{ .Values.dstack.projectName | quote }}
 {{- include "squall.dstackTokenEnv" . | nindent 10 }}
+          # Defaults to the proxy Service THIS CHART creates (proxy-service.yaml).
+          # It used to default to "" — fail-safe for a hand-wired install, but in
+          # a chart install it silently disabled scale-down, the product's whole
+          # premise (D148): the controller could never gather idle evidence, so
+          # no Model ever slept.
           - name: SQUALL_PROXY_SERVICE_NAMESPACE
-            value: {{ .Values.controller.env.proxyServiceNamespace | quote }}
+            value: {{ .Values.controller.env.proxyServiceNamespace | default .Values.namespace | quote }}
           - name: SQUALL_PROXY_SERVICE_NAME
-            value: {{ .Values.controller.env.proxyServiceName | quote }}
+            value: {{ .Values.controller.env.proxyServiceName | default "squall-proxy" | quote }}
           - name: SQUALL_IDLE_REQUEUE_INTERVAL
             value: {{ .Values.controller.env.idleRequeueInterval | quote }}
         securityContext:

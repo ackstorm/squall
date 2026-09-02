@@ -584,8 +584,11 @@ spec:
                       type: string
                     name:
                       description: |-
-                        Name is the fleet squall looked for or created (dstack.FleetName).
-                        Empty when the backend is not configured.
+                        Name is the fleet squall created (dstack.FleetName). Empty when the
+                        backend is not configured, and empty on Admitting: dstack only reports
+                        THAT some active fleet admits the backend, not which one, and naming
+                        the auto fleet here misled operators whose own declared fleet was the
+                        one admitting (D149).
                       type: string
                     state:
                       description: State is what squall found for this backend.

@@ -17,6 +17,15 @@ dstack's own storage of this credential is a separate problem, already
 recorded: D47 (unencrypted at rest in dstack's DB) and D85 (returned in
 cleartext by its config_info endpoint). Referencing a Secret here does not fix
 those; it fixes only this chart's contribution.
+
+When neither the Secret nor the literal is set, fall back to dstack.adminToken:
+with the bundled dstack server they are the SAME credential viewed from two
+sides (the server boots with it, the clients present it), and a fresh install
+that set only adminToken — which is what the README quickstart does — used to
+leave the controller calling with no token at all, logging `dstack:
+unauthorized` every reconcile (D147). The knobs stay separate because against
+an EXTERNAL dstack server adminToken is meaningless and the token comes from
+that server.
 */}}
 {{- define "squall.dstackTokenEnv" -}}
 - name: SQUALL_DSTACK_TOKEN
@@ -26,6 +35,6 @@ those; it fixes only this chart's contribution.
       name: {{ .Values.controller.env.dstackTokenSecret.name | quote }}
       key: {{ required "controller.env.dstackTokenSecret.key is required when dstackTokenSecret.name is set" .Values.controller.env.dstackTokenSecret.key | quote }}
 {{- else }}
-  value: {{ .Values.controller.env.dstackToken | quote }}
+  value: {{ .Values.controller.env.dstackToken | default .Values.dstack.adminToken | quote }}
 {{- end }}
 {{- end -}}

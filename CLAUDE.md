@@ -138,4 +138,7 @@ prompt:
   finder angles over 215 files. All 26 findings with file:line, severity, risk and a
   fix-size estimate, plus the raw JSON. These are the ledger's **D103-D128**: read the
   ledger for the adjudication, this file for the evidence behind it.
+- `docs/references/rtx6kpro-notes.md` — measured serving numbers for our GPU class
+  (Qwen3.8-27B perf headroom, GLM-5.3-Flash 4-card recipe), extracted from the rtx6kpro
+  community wiki. Read before touching `config/samples/`.
 - In-path memories: `internal/dstack/CLAUDE.md`, `internal/controller/squall/CLAUDE.md`.

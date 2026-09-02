@@ -77,7 +77,12 @@ func preflight(ctx context.Context, c preflightClient, backends []string) (reaso
 				fleets = append(fleets, squallv1alpha1.FleetStatus{Backend: b, Name: dstack.FleetName(b), State: squallv1alpha1.FleetStateCreated})
 			}
 		} else {
-			fleets = append(fleets, squallv1alpha1.FleetStatus{Backend: b, Name: dstack.FleetName(b), State: squallv1alpha1.FleetStateAdmitting})
+			// No Name here on purpose (D149): HasFleetFor only answers THAT
+			// some active fleet admits the backend, not WHICH. Stamping
+			// dstack.FleetName(b) reported "squall-auto-kubernetes" to an
+			// operator whose own declared fleet was the one admitting — a
+			// fleet dstack's API did not even list.
+			fleets = append(fleets, squallv1alpha1.FleetStatus{Backend: b, State: squallv1alpha1.FleetStateAdmitting})
 		}
 	}
 	switch {

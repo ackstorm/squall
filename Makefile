@@ -6,7 +6,7 @@ IMG ?= squall:latest
 # Chart.yaml's version/appVersion: a binary reporting "dev" in a tagged
 # release is indistinguishable from a developer's local build, which is
 # exactly the ambiguity you do not want when reading a bug report.
-VERSION ?= 0.1.0
+VERSION ?= 0.1.1
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set).
 # Guarded with `command -v go` so host-only targets (clean, doctor, cluster-up, ...)
@@ -198,6 +198,7 @@ _qa-security:
 test-unit: ## Phase 1 — pure-logic tests, no envtest, no cluster.
 	$(call container_target,_test-unit)
 _test-unit: fmt vet
+	./test/helm_proxy_jump_test.sh
 	$(call go_or_skip,go test ./... -short -count=1 -coverprofile cover-unit.out)
 
 .PHONY: test-envtest

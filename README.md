@@ -3,7 +3,7 @@
 **Scale-to-zero LLM serving on GPUs that are not in your cluster.**
 
 ![status](https://img.shields.io/badge/status-pre--alpha-orange)
-![release](https://img.shields.io/badge/release-v0.1.0-green)
+![release](https://img.shields.io/badge/release-v0.1.1-green)
 ![go](https://img.shields.io/badge/go-1.26.6-00ADD8)
 ![license](https://img.shields.io/badge/license-Apache%202.0-blue)
 
@@ -125,22 +125,23 @@ for `fleet.idleDuration`, dstack releases it.
 
 - A Kubernetes cluster — developed and tested against 1.31 — and Helm 3.8+ (for OCI charts)
 - An API key for at least one dstack backend — Vast.ai is the cheapest way to try this
-- Squall's images and chart are published to GHCR. While this repository is private they are
-  private too, so `helm install` needs a pull secret (`--set imagePullSecrets[0].name=...`).
+- Squall's images and chart are published to GHCR and are public — both pull anonymously,
+  no pull secret needed.
 
 ### Install
 
 The chart deploys squall **and a dstack server** — you do not need to run dstack yourself.
 
 ```bash
-helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.0 \
+helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.1 \
   --namespace squall-system --create-namespace \
   --set dstack.adminToken="$(openssl rand -hex 16)" \
   --set controller.env.dstackURL="http://dstack.squall-system.svc.cluster.local:3000"
 ```
 
 With no `dstack.backends`, dstack provisions onto your own cluster — no GPU, no bill, useful
-for trying the lifecycle end to end. To rent real hardware, point it at a provider:
+for trying the lifecycle end to end. The chart discovers the in-cluster SSH jump address;
+you do not need to supply a node IP. To rent real hardware, point it at a provider:
 
 ```yaml
 # values.yaml
@@ -168,7 +169,7 @@ apiVersion: squall.ackstorm.ai/v1alpha1
 kind: Model
 metadata:
   name: qwen-tiny
-  namespace: squall
+  namespace: squall-system       # any namespace works; this one already exists
 spec:
   engine: ollama
   image: ollama/ollama@sha256:c622a7adec67cf5bd7fe1802b7e26aa583a955a54e91d132889301f50c3e0bd0
@@ -177,10 +178,17 @@ spec:
 
   minReplicas: 0                 # 0 = sleeps when idle; 1 = always on
   holdTimeout: 10m               # how long a request waits for a cold start
-  scaleDownDelaySeconds: 120     # idle window before the run drops to zero replicas
+  scaleDownDelaySeconds: 600     # idle window before the run drops to zero replicas
   provisioningTimeout: 20m       # a wake that never becomes Ready is destroyed
   drainTimeout: 30s
   maxLifetime: 4h
+
+  resources:                     # dstack's own selector syntax, passed through verbatim
+    cpu:
+      count: "2.."               # note: an OBJECT here — unlike the chart's fleet block,
+    memory: 8GB..                # which is dstack's flat fleet schema (cpu: "2..")
+    gpu:
+      memory: 8GB..              # a floor, not a pin: cheapest card that clears it
 
   placement:
     backends: [vastai]           # only backends named here AND in the chart are eligible
@@ -197,8 +205,13 @@ spec:
 
 ```bash
 kubectl apply -f qwen-tiny.yaml
-kubectl -n squall get models -w
+kubectl -n squall-system get models -w
 ```
+
+Worked examples with measured resource and placement choices live in
+[config/samples/](config/samples/): a verified Qwen3.8-27B-FP8 on a single 96GB card, and a
+GLM-5.3-Flash on four of them, transcribed from the
+[rtx6kpro](https://github.com/local-inference-lab/rtx6kpro) runbooks.
 
 ### Send it a request
 
@@ -214,7 +227,7 @@ The first call blocks while the GPU is provisioned — minutes, on a real backen
 answers. Watch it happen:
 
 ```bash
-kubectl -n squall get model qwen-tiny -w          # Asleep → Waking → Ready
+kubectl -n squall-system get model qwen-tiny -w   # Asleep → Waking → Ready
 kubectl -n squall-system logs -f deploy/squall-proxy
 ```
 
@@ -259,6 +272,7 @@ Full list in the [CHANGELOG](CHANGELOG.md); the running engineering ledger is
 | [docs/specs/](docs/specs/) | The design of record — state machine, wait contract, provider boundary |
 | [docs/references/](docs/references/) | Toolchain traps, testing discipline, decisions, the findings ledger |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes and known limitations |
+| [rtx6kpro](https://github.com/local-inference-lab/rtx6kpro) | Community field wiki for large LLMs on the 96GB Blackwell cards squall rents — model runbooks (GLM-5, Kimi, Qwen), quantization and speculative-decoding measurements behind our samples |
 
 The spec is authoritative. Read it before changing behaviour; every implementation task
 references its section numbers.

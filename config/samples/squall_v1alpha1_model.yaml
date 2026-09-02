@@ -93,6 +93,24 @@ spec:
     # anything downstream (LiteLLM, a chat UI) expects.
     - --reasoning-parser
     - qwen3
+    # ---- Performance headroom, UNVERIFIED on squall ----
+    # The rtx6kpro field wiki (https://github.com/local-inference-lab/
+    # rtx6kpro, models/qwen38-27b.md) measured THIS checkpoint on THIS card
+    # class: FP8 weights + fp8 KV + FlashInfer + MTP3 ≈ 7.7k tok/s prefill
+    # at 8k ctx, ~78 tok/s single-stream decode. Two findings worth chasing:
+    #
+    # 1) Attention backend. At 128k context the implicitly-chosen backend
+    #    collapsed (126.7 -> 31.9 tok/s single-stream, their TP=2 table)
+    #    while an explicit FlashInfer held 87.5+. Uncomment once verified
+    #    the flag exists and FlashInfer ships in this image at v0.28.0:
+    # - --attention-backend
+    # - flashinfer
+    #
+    # 2) MTP speculative decoding: ~1.5x single-stream in their runs (106.9
+    #    vs 69.4 tok/s, 70-77% draft acceptance). Their numbers come from a
+    #    COMMUNITY vLLM build; whether stock v0.28.0 drives this
+    #    checkpoint's MTP head, and under which --speculative-config
+    #    spelling, is unverified — measure before enabling.
 
   env:
     VLLM_LOGGING_LEVEL: INFO

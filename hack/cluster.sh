@@ -243,17 +243,6 @@ cmd_hydrate() {
     kubectl apply -k "${CLUSTER_DIR}/00-namespaces"
     kubectl apply -k "${CLUSTER_DIR}/01-model-mock"
 
-    # dstack refuses to provision against a node with no ExternalIP, so the
-    # backend reaches the runner through an explicit proxy_jump. On kind the
-    # node's InternalIP is the address that works from inside the cluster.
-    # Measured: see docs/references/dstack-real-api.md §3.
-    local node_ip
-    node_ip="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')"
-    if [ -z "${node_ip}" ]; then
-        echo "hack/cluster.sh: could not resolve the kind node's InternalIP" >&2
-        exit 1
-    fi
-
     # squall-system normally comes into being via `helm --create-namespace`
     # below, but 02-postgres must land in it BEFORE that install so dstack's
     # wait-for-postgres init container has something to wait for rather than
@@ -276,7 +265,6 @@ cmd_hydrate() {
         --namespace squall-system --create-namespace \
         --values "${HELM_VALUES}" \
         ${EXTRA_HELM_VALUES:+--values "${EXTRA_HELM_VALUES}"} \
-        --set "dstack.kubernetes.proxyJump.hostname=${node_ip}" \
         --wait --timeout "${ROLLOUT_TIMEOUT}"
 
     # Stamp BEFORE waiting: the patch is what triggers the rollout when the

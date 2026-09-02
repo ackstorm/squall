@@ -1,0 +1,114 @@
+# GLM-5.3-Flash on 4x 96GB Blackwell — UNVERIFIED. Squall has never launched
+# this CR; every value below is transcribed from the rtx6kpro community
+# runbook (https://github.com/local-inference-lab/rtx6kpro,
+# models/glm-5.3-flash.md, release R12, read 2026-09-01), which qualified it
+# on four RTX PRO 6000 Blackwell Workstation cards over PCIe 5.0 — the exact
+# card class the verified qwen3-8-27b sample rents on Vast.ai. Their measured
+# numbers (MTP:3, LMCache on): ~14.8k tok/s prefill at 32k ctx, ~254 tok/s
+# single-stream decode. Expect lower: those runs used a +6000MHz VRAM offset
+# a marketplace host will not have.
+#
+# UNLIKE the qwen sample, this image is NOT stock vllm-openai: it is the
+# runbook's own community build, configured through ENVIRONMENT VARIABLES by
+# its entrypoint. So spec.model and spec.args are deliberately ABSENT — an
+# empty pair leaves the image's CMD in place (engineCommands returns nil, by
+# design), and everything vLLM needs arrives via spec.env instead. Serving
+# still works end to end: the replica reports exactly one model id on
+# /v1/models, and with one id the controller publishes it as
+# status.servedModel, so squall-proxy bridges this CR's name to it (D100 —
+# see servedModelToForward).
+apiVersion: squall.ackstorm.ai/v1alpha1
+kind: Model
+metadata:
+  name: glm-5-3-flash
+  namespace: squall
+spec:
+  engine: vllm
+  # Digest-pinned; the tag was jovian-judgement-community-20260901-r12. The
+  # digest pins the RUNTIME only — the model repo below still tracks HF
+  # `main`, which the runbook itself flags as its reproducibility hole.
+  image: voipmonitor/vllm@sha256:80dc3c3481255c123b3fe9ff164a879b7a141292389d29b0fd04a8472e6bf15d
+
+  env:
+    # Which weights: ModelOpt NVFP4, W4A4, 288 experts, FP8-compressed MLA
+    # KV. The runbook says to pin MODEL_REVISION to a commit for
+    # reproducibility; it does not publish the hash, so resolve one from HF
+    # before relying on this in production.
+    MODEL: local-inference-lab/GLM-5.3-Flash-NVFP4
+    # PORT must be 8000: squall derives the replica port and probe from
+    # engine=vllm (enginePort), and this image reads it from env.
+    PORT: "8000"
+    TP: "4"
+    DCP: "1"
+    MAX_MODEL_LEN: "262144"
+    MAX_NUM_SEQS: "16"
+    MAX_NUM_BATCHED_TOKENS: "4096"
+    PREFILL_SCHEDULE_INTERVAL: "8"
+    MAX_CUDAGRAPH_CAPTURE_SIZE: "128"
+    GPU_MEMORY_UTILIZATION: "0.90"
+    # MTP speculative decoding, 3 draft tokens: +52% single-stream decode in
+    # their R12 table (254.3 vs 167.5 tok/s), prefill unchanged. Set MTP=0
+    # to disable.
+    SPECULATOR: mtp
+    MTP: "3"
+    # PCIe-only NCCL tuning for TP=4 without NVLink, verbatim from the
+    # runbook's launch command. Do NOT add NCCL_GRAPH_FILE= (empty): the
+    # wiki's own top footgun — an empty value breaks NCCL outright.
+    B12X_PCIE_ALLREDUCE: "1"
+    NCCL_MIN_NCHANNELS: "32"
+    NCCL_MAX_NCHANNELS: "32"
+    NCCL_CUMEM_ENABLE: "0"
+    NCCL_IB_DISABLE: "1"
+    NCCL_P2P_LEVEL: SYS
+    NCCL_PROTO: LL,LL128,Simple
+    OMP_NUM_THREADS: "2"
+
+  features:
+    - TextGeneration
+
+  resources:
+    cpu:
+      count: "8.."
+    memory: 64GB..
+    # The runbook runs with --shm-size 32g for 4-way tensor parallel.
+    shmSize: 32GB
+    # UNMEASURED: the NVFP4 checkpoint's on-disk size is not published in
+    # the runbook. dstack's unset default is 100GB (D55), certainly too
+    # small for a 4x96GB-class MoE; 400GB is a guess to be corrected after
+    # the first real provision. Beware D58: an over-ask here returns zero
+    # offers and no error.
+    disk: 400GB..
+    gpu:
+      # Qualified on the Workstation card; the server variant should be
+      # electrically identical for this purpose.
+      name: [RTXPRO6000WS, RTXPRO6000S]
+      count: "4"
+      memory: 90GB..
+
+  placement:
+    backends: [vastai]
+    # GUESS: 4x the ~$2/h a single 96GB card measured in the qwen sample.
+    # Multi-GPU offers price differently; expect to tune against the live
+    # catalogue (D58: a ceiling that clears nothing looks like an empty
+    # market).
+    maxPricePerHour: "9.00"
+
+  probe:
+    # The wrapper runs vLLM underneath, so /health answers once the engine
+    # is up. Weight load is long; readyAfter keeps one lucky probe from
+    # declaring victory early.
+    path: /health
+    interval: 10s
+    readyAfter: 2
+
+  minReplicas: 0
+  # Weights are several hundred GB to a marketplace host: the first wake
+  # will be long. Both values are guesses until measured (same caveat the
+  # qwen sample carried before its verified run).
+  holdTimeout: 30m
+  provisioningTimeout: 45m
+  scaleDownDelaySeconds: 300
+  fleet:
+    idleDuration: 10m
+  drainTimeout: 60s
+  maxLifetime: 168h

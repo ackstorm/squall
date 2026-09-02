@@ -143,7 +143,10 @@ func TestPreflight_ReportsFleetStatePerBackend(t *testing.T) {
 	}
 	_, _, fleets := preflight(context.Background(), c, []string{"vastai", "aws", "gcp"})
 	want := []squallv1alpha1.FleetStatus{
-		{Backend: "vastai", Name: "squall-auto-vastai", State: squallv1alpha1.FleetStateAdmitting},
+		// Admitting carries no Name (D149): HasFleetFor does not say WHICH
+		// fleet admits, and fabricating the auto name misled operators whose
+		// own declared fleet was the admitting one.
+		{Backend: "vastai", State: squallv1alpha1.FleetStateAdmitting},
 		{Backend: "aws", Name: "squall-auto-aws", State: squallv1alpha1.FleetStateCreated},
 		{Backend: "gcp", State: squallv1alpha1.FleetStateUnconfigured},
 	}

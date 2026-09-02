@@ -88,8 +88,12 @@ controller:
       name: ""
       key: token
     # The proxy Service squall-controller watches EndpointSlices on for §6's idle
-    # evidence. Both empty is a safe default: it keeps sleep unreachable
-    # rather than misreading an unwired proxy as idle.
+    # evidence. Empty defaults to the Service this chart itself creates
+    # (`squall-proxy` in .Values.namespace) — the old "" default was meant as
+    # fail-safe ("keep sleep unreachable rather than misread an unwired proxy
+    # as idle") but in a chart install it silently disabled scale-down
+    # entirely (D148). Set both only to point at a proxy Service the chart
+    # does not manage.
     proxyServiceNamespace: ""
     proxyServiceName: ""
     # time.Duration string (e.g. "15s"). Empty defers to the controller's own
@@ -433,9 +437,9 @@ dstack:
     # in-Pod. Arbitrary — never compared against any host kubeconfig.
     contextName: incluster
     proxyJump:
-      # Required. kind nodes have no ExternalIP and dstack refuses to
-      # provision without one; hack/cluster.sh resolves the kind node's
-      # InternalIP and sets this. See §3 of dstack-real-api.md.
+      # Optional override. Empty uses the dstack Pod's node IP from the
+      # Kubernetes Downward API; dstack needs a node address because it
+      # exposes its SSH jump pod through a NodePort Service.
       hostname: ""
       # Pinned inside kind's NodePort range (measured working value).
       port: 32000

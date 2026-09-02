@@ -1,10 +1,8 @@
 # Values for the e2e install of deploy/helm/squall.
 #
 # This file replaces the old 02-operator kustomize overlay. Everything the
-# overlay patched onto the two Deployments is a chart value now; the only
-# thing that cannot live here is dstack.kubernetes.proxyJump.hostname, which
-# is the kind node's InternalIP and is resolved at install time by
-# hack/cluster.sh.
+# overlay patched onto the two Deployments is a chart value now. The chart
+# obtains dstack's proxy-jump node address from the Pod's status.hostIP.
 #
 # The tokens below are deliberately fixed, obviously-fake strings. Never put
 # a value here that could pass for a real credential.
