@@ -285,7 +285,7 @@ cmd_status() {
     kubectl get namespaces -l e2e=true
     kubectl get all -n squall
     kubectl get all -n squall-system
-    kubectl get all -n squall-runs
+    kubectl get all -n squall
     kubectl get models -n squall -o wide
 }
 

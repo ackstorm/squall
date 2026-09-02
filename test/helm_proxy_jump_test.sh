@@ -7,3 +7,4 @@ rendered="$(helm template squall deploy/helm/squall \
 
 grep -F 'hostname: "${DSTACK_PROXY_JUMP_HOSTNAME}"' <<<"${rendered}" >/dev/null
 grep -A4 'name: DSTACK_PROXY_JUMP_HOSTNAME' <<<"${rendered}" | grep -F 'fieldPath: status.hostIP' >/dev/null
+grep -A5 '# Source: squall/templates/dstack-namespace.yaml' <<<"${rendered}" | grep -Fx '  name: squall' >/dev/null

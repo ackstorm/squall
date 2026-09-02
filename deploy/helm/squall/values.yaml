@@ -254,7 +254,7 @@ dstack:
   # spec.placement.backends (§12.3's compliance allowlist).
   backends: []
 
-  runsNamespace: squall-runs
+  runsNamespace: squall
   image:
     repository: dstackai/dstack
     # PINNED. Every measured fact this chart's dstack wiring relies on (the

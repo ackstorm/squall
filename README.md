@@ -3,7 +3,7 @@
 **Scale-to-zero LLM serving on GPUs that are not in your cluster.**
 
 ![status](https://img.shields.io/badge/status-pre--alpha-orange)
-![release](https://img.shields.io/badge/release-v0.1.1-green)
+![release](https://img.shields.io/badge/release-v0.1.2-green)
 ![go](https://img.shields.io/badge/go-1.26.6-00ADD8)
 ![license](https://img.shields.io/badge/license-Apache%202.0-blue)
 
@@ -133,7 +133,7 @@ for `fleet.idleDuration`, dstack releases it.
 The chart deploys squall **and a dstack server** — you do not need to run dstack yourself.
 
 ```bash
-helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.1 \
+helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.2 \
   --namespace squall-system --create-namespace \
   --set dstack.adminToken="$(openssl rand -hex 16)" \
   --set controller.env.dstackURL="http://dstack.squall-system.svc.cluster.local:3000"

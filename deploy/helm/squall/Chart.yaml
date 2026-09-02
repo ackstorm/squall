@@ -9,5 +9,5 @@ type: application
 # Chart and app are versioned together: this chart exists only to
 # deploy this operator, so a chart version that runs ahead of appVersion says
 # there were chart-only releases, and there have not been any.
-version: 0.1.1
-appVersion: "0.1.1"
+version: 0.1.2
+appVersion: "0.1.2"

@@ -13,6 +13,15 @@ out explicitly, because that is the class of change worth reading twice.
 
 Nothing yet.
 
+## [0.1.2] — 2026-09-02
+
+### Changed
+
+- The bundled Kubernetes backend now places dstack run pods and its SSH jump
+  in namespace `squall` by default instead of `squall-runs`. Scale Models down
+  before upgrading an existing installation because the old namespace is
+  removed by Helm.
+
 ## [0.1.1] — 2026-09-02
 
 ### Added
@@ -107,6 +116,7 @@ order to run this safely are listed.
   so a Model verified before upgrading keeps it empty until its run generation
   is replaced. Empty means "do not rewrite", which is the safe direction.
 
-[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/ackstorm/squall/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ackstorm/squall/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ackstorm/squall/releases/tag/v0.1.0
