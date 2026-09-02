@@ -6,7 +6,7 @@ IMG ?= squall:latest
 # Chart.yaml's version/appVersion: a binary reporting "dev" in a tagged
 # release is indistinguishable from a developer's local build, which is
 # exactly the ambiguity you do not want when reading a bug report.
-VERSION ?= 0.1.3
+VERSION ?= 0.1.4
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set).
 # Guarded with `command -v go` so host-only targets (clean, doctor, cluster-up, ...)
