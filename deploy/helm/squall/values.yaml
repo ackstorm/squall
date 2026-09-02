@@ -168,8 +168,8 @@ proxy:
     # Service, which targets the "http" port by name, not this value.
     addr: ""
 
-# A real dstack 0.21.2 server, running the Kubernetes backend pointed at the
-# very cluster it runs in. Every default below is a MEASURED fact from
+# A real dstack server, running the Kubernetes backend pointed at the very
+# cluster it runs in. Every default below is a MEASURED fact from
 # docs/references/dstack-real-api.md §9 (dstack 0.21.2 on kind) — re-verify
 # against that doc before changing any of them.
 dstack:
@@ -192,7 +192,7 @@ dstack:
   # the e2e uses: no GPU, no bill. Set this to run on real hardware.
   #
   # The list is passed through to dstack's server/config.yml VERBATIM — it
-  # is dstack's own schema, not a squall one, so anything dstack 0.21.2
+  # is dstack's own schema, not a squall one, so anything dstack 0.21.3
   # accepts works here and nothing needs a chart change.
   #
   # Use ${VAR} placeholders and credentialsSecretName above rather than
@@ -260,14 +260,23 @@ dstack:
     # PINNED. Every measured fact this chart's dstack wiring relies on (the
     # required fleet, the proxy_jump requirement, the RBAC verb set) was
     # measured against exactly this version. Re-measure before bumping.
-    tag: "0.21.2"
+    tag: "0.21.3"
     pullPolicy: IfNotPresent
   # Required. Becomes the dstack "admin" user's token on first boot only
   # (DSTACK_SERVER_ADMIN_TOKEN — server/services/users.py); a later change has
-  # no effect on an already-bootstrapped server volume. NEVER a real token in
-  # a values file — for e2e this must be a fixed, obviously-fake string (e.g.
-  # "e2e-local-token"), never one that could pass for a real credential.
-  adminToken: ""
+  # no effect on an already-bootstrapped server volume. Set exactly one of
+  # value or valueFrom. Prefer valueFrom for real deployments so the token is
+  # not stored in Helm release data or rendered manifests:
+  #
+  #   valueFrom:
+  #     secretKeyRef:
+  #       name: dstack-admin-token
+  #       key: token
+  #
+  # value exists only for local/e2e fixtures and must be obviously fake.
+  adminToken:
+    value: ""
+    valueFrom: {}
   projectName: main
   # Measured: the server (Python/FastAPI/SQLAlchemy, migrations + background
   # schedulers) settles well above the Go binaries' footprint; 512Mi OOM-killed

@@ -135,7 +135,7 @@ The chart deploys squall **and a dstack server** — you do not need to run dsta
 ```bash
 helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.2 \
   --namespace squall-system --create-namespace \
-  --set dstack.adminToken="$(openssl rand -hex 16)" \
+  --set-string dstack.adminToken.value="$(openssl rand -hex 16)" \
   --set controller.env.dstackURL="http://dstack.squall-system.svc.cluster.local:3000"
 ```
 

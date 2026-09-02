@@ -1,5 +1,5 @@
 # The engine double. Previously bundled with the fake dstack server; the
-# server is now the real dstack 0.21.2, installed from deploy/helm/squall,
+# server is now the real dstack 0.21.3, installed from deploy/helm/squall,
 # so only the engine stays fake here — per the standing rule that the ONLY
 # thing an e2e may fake is the GPU-backed model itself.
 resources:

@@ -15,14 +15,20 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.phase
-      name: Phase
+    - jsonPath: .spec.engine
+      name: Engine
       type: string
     - jsonPath: .status.runId
       name: Run
       type: string
-    - jsonPath: .spec.engine
-      name: Engine
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Schedulable")].status
+      name: Schedulable
+      type: string
+    - jsonPath: .status.fleet[*].state
+      name: Fleet
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -31,15 +37,9 @@ spec:
       name: Served
       priority: 1
       type: string
-    - jsonPath: .status.conditions[?(@.type=="Schedulable")].status
-      name: Schedulable
-      type: string
     - jsonPath: .status.conditions[?(@.type=="Schedulable")].reason
       name: Reason
       priority: 1
-      type: string
-    - jsonPath: .status.fleet[*].state
-      name: Fleet
       type: string
     name: v1alpha1
     schema:

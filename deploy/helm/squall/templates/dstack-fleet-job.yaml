@@ -40,7 +40,7 @@ spec:
         - name: DSTACK_PROJECT
           value: {{ .Values.dstack.projectName | quote }}
         - name: DSTACK_ADMIN_TOKEN
-          value: {{ required "dstack.adminToken is required — see values.yaml's comment on it" .Values.dstack.adminToken | quote }}
+{{- include "squall.dstackAdminTokenValue" . | nindent 10 }}
         - name: WAIT_ATTEMPTS
           value: {{ .Values.dstack.waitAttempts | quote }}
         - name: WAIT_INTERVAL_SECONDS

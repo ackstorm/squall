@@ -11,7 +11,13 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- `dstack.adminToken` now uses Kubernetes' native `value`/`valueFrom` shape;
+  existing scalar values must move to `dstack.adminToken.value`.
+- Updated the bundled dstack server from 0.21.2 to 0.21.3.
+- Reordered the Model's default printer columns to Engine, Run, Phase,
+  Schedulable, Fleet, Age.
 
 ## [0.1.2] — 2026-09-02
 

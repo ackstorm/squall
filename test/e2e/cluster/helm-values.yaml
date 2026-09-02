@@ -55,7 +55,8 @@ proxy:
     backendURLTemplate: http://%s.squall.svc.cluster.local:8080
 
 dstack:
-  adminToken: e2e-local-token
+  adminToken:
+    value: e2e-local-token
   # Real Postgres (test/e2e/cluster/02-postgres), proving the chart's
   # dstack.database wiring end to end instead of the SQLite fallback —
   # see values.yaml's dstack.database comment for why SQLite is

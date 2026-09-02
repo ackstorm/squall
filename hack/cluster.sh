@@ -10,7 +10,7 @@
 # Squall's phases: namespaces -> model-mock (the engine double) -> a
 # development Postgres (test/e2e/cluster/02-postgres, dev-only per
 # deploy/helm/squall's values.yaml doctrine) -> the Helm chart (real dstack
-# 0.21.2 on that Postgres + squall-operator + squall-proxy) -> fixtures.
+# 0.21.3 on that Postgres + squall-operator + squall-proxy) -> fixtures.
 # No LiteLLM, no toolhive — those are not squall's concern.
 #
 # The dstack server here is the REAL one, not a fake. The only thing this
@@ -43,10 +43,14 @@ HELM_VALUES="${HELM_VALUES:-${CLUSTER_DIR}/helm-values.yaml}"
 # forgets this file silently removes vastai and every later provision returns
 # zero offers with no error. Measured 2026-08-27.
 EXTRA_HELM_VALUES="${EXTRA_HELM_VALUES:-}"
-# Pinned, and it must match deploy/helm/squall/values.yaml's dstack.image.tag:
-# every measured fact the chart's dstack wiring relies on was measured on
-# exactly this version. See docs/references/dstack-real-api.md.
-DSTACK_IMAGE="dstackai/dstack:0.21.2"
+# Render the same image Helm will install instead of maintaining a second pin.
+DSTACK_IMAGE="$(
+    helm template "${HELM_RELEASE}" "${CHART_DIR}" \
+        --values "${HELM_VALUES}" \
+        ${EXTRA_HELM_VALUES:+--values "${EXTRA_HELM_VALUES}"} \
+        --show-only templates/dstack-deployment.yaml |
+        awk '$1 == "image:" { gsub(/"/, "", $2); print $2; exit }'
+)"
 # Backs both the dev Postgres deployment (02-postgres) and the dstack Pod's
 # wait-for-postgres init container — pulled and kind-loaded once, same as
 # DSTACK_IMAGE, so the cluster never reaches the network during a test run.

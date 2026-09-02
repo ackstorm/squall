@@ -1,6 +1,23 @@
 {{/*
 SPDX-License-Identifier: Apache-2.0
 
+squall.dstackAdminTokenValue renders the value half of a Kubernetes EnvVar.
+The chart exposes the native value/valueFrom shape so External Secrets can
+provide the token without copying it into Helm release data.
+*/}}
+{{- define "squall.dstackAdminTokenValue" -}}
+{{- if and .Values.dstack.adminToken.value (not (empty .Values.dstack.adminToken.valueFrom)) -}}
+{{- fail "dstack.adminToken.value and dstack.adminToken.valueFrom are mutually exclusive" -}}
+{{- else if not (empty .Values.dstack.adminToken.valueFrom) }}
+valueFrom:
+{{ toYaml .Values.dstack.adminToken.valueFrom | nindent 2 }}
+{{- else }}
+value: {{ required "dstack.adminToken.value or dstack.adminToken.valueFrom is required — see values.yaml's comment on it" .Values.dstack.adminToken.value | quote }}
+{{- end }}
+{{- end -}}
+
+{{/*
+
 squall.dstackTokenEnv renders the SQUALL_DSTACK_TOKEN environment variable for
 BOTH deployments that need it — squall-controller (dstack's REST API) and
 squall-proxy (dstack's service proxy, LIVE-4). One token, one dstack project,
@@ -34,7 +51,9 @@ that server.
     secretKeyRef:
       name: {{ .Values.controller.env.dstackTokenSecret.name | quote }}
       key: {{ required "controller.env.dstackTokenSecret.key is required when dstackTokenSecret.name is set" .Values.controller.env.dstackTokenSecret.key | quote }}
+{{- else if .Values.controller.env.dstackToken }}
+  value: {{ .Values.controller.env.dstackToken | quote }}
 {{- else }}
-  value: {{ .Values.controller.env.dstackToken | default .Values.dstack.adminToken | quote }}
+{{ include "squall.dstackAdminTokenValue" . | nindent 2 }}
 {{- end }}
 {{- end -}}

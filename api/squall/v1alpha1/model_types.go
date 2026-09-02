@@ -711,14 +711,14 @@ type ModelStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
-// +kubebuilder:printcolumn:name="Run",type=string,JSONPath=`.status.runId`
 // +kubebuilder:printcolumn:name="Engine",type=string,JSONPath=`.spec.engine`
+// +kubebuilder:printcolumn:name="Run",type=string,JSONPath=`.status.runId`
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Schedulable",type=string,JSONPath=`.status.conditions[?(@.type=="Schedulable")].status`
+// +kubebuilder:printcolumn:name="Fleet",type=string,JSONPath=`.status.fleet[*].state`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:printcolumn:name="Served",type=string,JSONPath=`.status.servedModel`,priority=1
-// +kubebuilder:printcolumn:name="Schedulable",type=string,JSONPath=`.status.conditions[?(@.type=="Schedulable")].status`
 // +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[?(@.type=="Schedulable")].reason`,priority=1
-// +kubebuilder:printcolumn:name="Fleet",type=string,JSONPath=`.status.fleet[*].state`
 
 // Model is the Schema for the models API.
 type Model struct {

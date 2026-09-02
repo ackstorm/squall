@@ -14,7 +14,9 @@ updates:
 
   # Enable version updates for Docker
   - package-ecosystem: "docker"
-    directory: "/"
+    directories:
+      - "/"
+      - "/deploy/helm/squall"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -22,4 +24,4 @@ updates:
     open-pull-requests-limit: 3
     commit-message:
       prefix: "chore"
-      include: "scope" 
+      include: "scope"
