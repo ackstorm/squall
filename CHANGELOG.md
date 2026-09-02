@@ -11,6 +11,10 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.1.3] — 2026-09-02
+
 ### Added
 
 - Added bounded lifecycle and provisioning metrics to the controller, request
@@ -137,7 +141,8 @@ order to run this safely are listed.
   so a Model verified before upgrading keeps it empty until its run generation
   is replaced. Empty means "do not rewrite", which is the safe direction.
 
-[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/ackstorm/squall/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/ackstorm/squall/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ackstorm/squall/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ackstorm/squall/releases/tag/v0.1.0
