@@ -120,6 +120,7 @@ subjects:
 - kind: ServiceAccount
   name: {{ .Values.controller.serviceAccountName }}
   namespace: {{ .Values.namespace }}
+{{- if .Values.controller.metricsSecure }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -161,6 +162,7 @@ rules:
   - "/metrics"
   verbs:
   - get
+{{- end }}
 ---
 # The following three roles are not used by squall itself — they help
 # cluster admins delegate squall.ackstorm.ai permissions to other users

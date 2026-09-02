@@ -199,6 +199,7 @@ test-unit: ## Phase 1 — pure-logic tests, no envtest, no cluster.
 	$(call container_target,_test-unit)
 _test-unit: fmt vet
 	./test/helm_proxy_jump_test.sh
+	./test/helm_metrics_test.sh
 	$(call go_or_skip,go test ./... -short -count=1 -coverprofile cover-unit.out)
 
 .PHONY: test-envtest

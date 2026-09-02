@@ -11,6 +11,12 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+### Added
+
+- Added bounded lifecycle and provisioning metrics to the controller, request
+  health metrics to the proxy, enabled bundled dstack metrics, and optional
+  Prometheus Operator `ServiceMonitor` resources.
+
 ### Changed
 
 - `dstack.adminToken` now uses Kubernetes' native `value`/`valueFrom` shape;

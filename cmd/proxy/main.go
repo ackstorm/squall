@@ -23,6 +23,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -91,6 +93,8 @@ func main() {
 	patcher := &proxy.DynamicPatcher{Client: dyn, Namespace: namespace, Cache: cache}
 	demand := proxy.NewDemandCoalescer(patcher, cooldown, clock.RealClock{})
 	activity := proxy.NewActivityTracker(clock.RealClock{})
+	metricsRegistry := prometheus.NewRegistry()
+	proxyMetrics := proxy.NewProxyMetrics(metricsRegistry)
 
 	// LIVE-3: defaultRefreshInterval used to be cooldown/2 — an accident of
 	// arithmetic, not a reasoned fraction of anything — and then, briefly, a
@@ -155,9 +159,10 @@ func main() {
 		Clock:              clock.RealClock{},
 		RefreshInterval:    envDuration("SQUALL_DEMAND_REFRESH_INTERVAL", defaultRefreshCeiling),
 		MaxPendingPerModel: envInt("SQUALL_MAX_PENDING_PER_MODEL", 0),
+		Metrics:            proxyMetrics,
 	}
 
-	mux := newMux(cache, activity, handler)
+	mux := newMux(cache, activity, handler, promhttp.HandlerFor(metricsRegistry, promhttp.HandlerOpts{}))
 
 	addr := os.Getenv("SQUALL_PROXY_ADDR")
 	if addr == "" {
@@ -188,7 +193,9 @@ func main() {
 // parameter is simply accepted and ignored. A client that POSTs it (or adds
 // filters) gets the model list, not a 400 from the forwarding path's
 // "missing model" check.
-func newMux(cache *proxy.ModelCache, activity *proxy.ActivityTracker, handler http.Handler) *http.ServeMux {
+func newMux(
+	cache *proxy.ModelCache, activity *proxy.ActivityTracker, handler, metricsHandler http.Handler,
+) *http.ServeMux {
 	mux := http.NewServeMux()
 	// D111: /healthz is also the Deployment's readinessProbe, and it used
 	// to answer 200 unconditionally while RunInformerCache synced in a
@@ -208,6 +215,7 @@ func newMux(cache *proxy.ModelCache, activity *proxy.ActivityTracker, handler ht
 	mux.HandleFunc("GET /v1/models", models)
 	mux.HandleFunc("POST /v1/models", models)
 	mux.HandleFunc("GET "+squallv1alpha1.ActivityPath, activity.ServeHTTP)
+	mux.Handle("GET /metrics", metricsHandler)
 	mux.Handle("/", handler)
 	return mux
 }

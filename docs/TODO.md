@@ -4,7 +4,7 @@ Running list. Owner decisions are recorded inline so they are not re-litigated.
 Findings keep their `D<n>` ledger ids — `docs/references/deviations-and-findings.md` stays the
 detail; this file is the ordering.
 
-Last reviewed: 2026-09-01.
+Last reviewed: 2026-09-02.
 
 ---
 
@@ -130,6 +130,19 @@ Ordered by what unblocks what. Nothing here is optional for the release.
 ---
 
 ## After 0.1.0
+
+- [ ] **Vast placement guarantees for long-running batch jobs.** Allow a Model
+      to require both (a) a minimum host reliability percentage and (b) an
+      offer whose advertised continuous rental window covers the workload plus
+      safety margin — for example, require at least 7 days of availability for
+      a 3-day batch. These are separate constraints: a historically reliable
+      host may still have a short remaining rental window. Reject the offer
+      before provisioning and surface `NoCapacity` when none qualifies. Do not
+      confuse this lower-bound guarantee with dstack's `max_duration`, which is
+      an upper bound that terminates Squall's own run. First verify which Vast
+      offer field dstack 0.21.x exposes for remaining/maximum rentable duration
+      and whether it can be passed through `VastAIProfileOptions`; if dstack
+      drops it, the change belongs upstream rather than in a Squall-side guess.
 
 - [ ] **D94 — no admission control on the Ready path.** `maxPendingPerModel` bounds *holds*
       only; once Ready, the proxy forwards unlimited concurrency into whatever capacity exists.

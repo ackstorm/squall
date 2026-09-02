@@ -22,6 +22,15 @@ namespace: squall-system
 #     - name: ghcr-squall
 imagePullSecrets: []
 
+# Optional Prometheus Operator discovery. The three metrics endpoints are
+# always reachable through ClusterIP Services; this only creates the
+# ServiceMonitor objects that make Prometheus scrape them automatically.
+serviceMonitor:
+  enabled: false
+  labels: {}
+  interval: 30s
+  scrapeTimeout: 10s
+
 controller:
   serviceAccountName: controller-manager
   replicas: 1
@@ -34,15 +43,10 @@ controller:
   # spec.maxLifetime is alert-only and never actuated, that field did nothing
   # at all.
   #
-  # Secure by default because the chart already ships exactly the RBAC this
-  # mode needs: squall-metrics-auth-role grants the controller tokenreviews
-  # and subjectaccessreviews, and squall-metrics-reader exists for a scraper
-  # to bind to. controller-runtime self-signs, so a scraper needs a bearer
-  # token from a ServiceAccount bound to squall-metrics-reader, and
-  # insecure_skip_verify (or metricsCertPath, which this chart does not wire).
-  # Set metricsSecure: false for a plaintext endpoint on the pod network.
+  # Plain HTTP by default: these metrics are exposed only through ClusterIP
+  # Services. Add network-layer protection before exposing them externally.
   metricsBindAddress: ":8443"
-  metricsSecure: true
+  metricsSecure: false
   image:
     repository: ghcr.io/ackstorm/squall-controller
     # Empty follows .Chart.AppVersion. Set it only to pin a build that is not
@@ -173,6 +177,11 @@ proxy:
 # docs/references/dstack-real-api.md §9 (dstack 0.21.2 on kind) — re-verify
 # against that doc before changing any of them.
 dstack:
+  # dstack's native /metrics endpoint is disabled unless this environment
+  # switch is present. It is served without auth on the ClusterIP Service.
+  metrics:
+    enabled: true
+
   # Name of an EXISTING Kubernetes Secret in this namespace holding cloud
   # credentials. Every key becomes an environment variable, and any ${KEY}
   # placeholder in dstack.backends below is substituted from it at Pod

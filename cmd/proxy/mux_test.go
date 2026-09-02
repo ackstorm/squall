@@ -23,7 +23,7 @@ func TestMux_ModelsIsOurs_AnyMethodAnyParams(t *testing.T) {
 		func(w http.ResponseWriter, _ *http.Request) {
 			t.Error("/v1/models reached the forwarding handler; it is squall's own route")
 			w.WriteHeader(http.StatusTeapot)
-		}))
+		}), http.NotFoundHandler())
 
 	for _, target := range []string{
 		"/v1/models",
@@ -49,5 +49,17 @@ func TestMux_ModelsIsOurs_AnyMethodAnyParams(t *testing.T) {
 				t.Fatalf("%s %s body = %q, want the model list", method, target, rec.Body.String())
 			}
 		}
+	}
+}
+
+func TestMux_MetricsIsServed(t *testing.T) {
+	mux := newMux(proxy.NewCache(), proxy.NewActivityTracker(clock.RealClock{}), http.NotFoundHandler(),
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("squall_proxy_requests_total 1\n"))
+		}))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "squall_proxy_requests_total 1\n" {
+		t.Fatalf("GET /metrics = %d %q", rec.Code, rec.Body.String())
 	}
 }

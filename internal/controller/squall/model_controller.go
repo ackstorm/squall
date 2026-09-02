@@ -75,6 +75,7 @@ type ModelReconciler struct {
 	AgeMetrics          *metrics.ModelAgeCollector
 	PriceMetrics        *metrics.ModelPriceCollector
 	UncontrolledMetrics *metrics.UncontrolledCollector
+	OperationalMetrics  *metrics.ModelOperationalCollector
 
 	// IdleRequeueInterval is how often Reconcile re-evaluates an on-demand
 	// Model (spec.MinReplicas == 0) that is awake (observed.Run.Replicas >
@@ -235,6 +236,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		if err != nil {
 			return ctrl.Result{}, err
 		}
+		r.recordProvisioningAttempt(&model, action)
 		run, err := r.DstackClient.Apply(ctx, dstack.ApplyRequest{
 			Name:     runName,
 			Replicas: action.Replicas,
@@ -455,6 +457,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	logProvisioningTimeout(logger, action, &model, observedPerHour)
 	logUncontrolledIfNeeded(logger, action, uncontrolledSince, &model, observedPerHour)
 	r.recordMetrics(&model, observedPerHour, metricUncontrolledSince, now)
+	r.recordOperationalMetrics(&model, observed, original.Status, now)
 
 	// See IdleRequeueInterval's doc comment: an awake, on-demand Model
 	// with nothing to actuate this pass must be re-evaluated later on a
@@ -464,6 +467,87 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *ModelReconciler) recordProvisioningAttempt(model *squallv1alpha1.Model, action Action) {
+	if action.Replicas > 0 && r.OperationalMetrics != nil {
+		r.OperationalMetrics.RecordProvisioningAttempt(model.Namespace, model.Name, metricBackend(model))
+	}
+}
+
+func (r *ModelReconciler) recordOperationalMetrics(model *squallv1alpha1.Model, observed Observed, prior squallv1alpha1.ModelStatus, now time.Time) {
+	if r.OperationalMetrics == nil {
+		return
+	}
+	backend := metricBackend(model)
+	fleets := make([]metrics.FleetObservation, 0, len(model.Status.Fleet))
+	for _, f := range model.Status.Fleet {
+		fleets = append(fleets, metrics.FleetObservation{Backend: f.Backend, Name: f.Name, State: f.State})
+	}
+	failureReason := ""
+	currentFailure := meta.FindStatusCondition(model.Status.Conditions, squallv1alpha1.ConditionProvisioning)
+	if currentFailure != nil && currentFailure.Status == metav1.ConditionFalse {
+		failureReason = metricProvisioningReason(currentFailure.Reason)
+	}
+	replicas, active := 0, false
+	if observed.Run != nil {
+		replicas, active = observed.Run.Replicas, true
+	}
+	r.OperationalMetrics.Observe(metrics.ModelObservation{
+		Namespace: model.Namespace, Name: model.Name, Phase: string(model.Status.Phase), Backend: backend,
+		RunActive: active, Replicas: replicas, Fleets: fleets, ProvisioningReason: failureReason,
+	})
+
+	if prior.Phase != model.Status.Phase {
+		transition := ""
+		switch model.Status.Phase {
+		case squallv1alpha1.ModelPhaseRecreating:
+			transition = "recreate"
+		case squallv1alpha1.ModelPhaseWaking:
+			transition = "wake"
+		case squallv1alpha1.ModelPhaseAsleep:
+			transition = "sleep"
+		}
+		if transition != "" {
+			r.OperationalMetrics.RecordTransition(model.Namespace, model.Name, backend, transition)
+		}
+	}
+	duration := time.Duration(0)
+	if model.Status.WakeStartedAt != nil {
+		duration = now.Sub(model.Status.WakeStartedAt.Time)
+	}
+	if prior.Phase != squallv1alpha1.ModelPhaseReady && model.Status.Phase == squallv1alpha1.ModelPhaseReady {
+		r.OperationalMetrics.RecordProvisioningOutcome(model.Namespace, model.Name, backend, "success", "", duration)
+	}
+	priorFailure := meta.FindStatusCondition(prior.Conditions, squallv1alpha1.ConditionProvisioning)
+	if currentFailure != nil && currentFailure.Status == metav1.ConditionFalse &&
+		(priorFailure == nil || priorFailure.Status != metav1.ConditionFalse || priorFailure.Message != currentFailure.Message) {
+		r.OperationalMetrics.RecordProvisioningOutcome(model.Namespace, model.Name, backend, "failure", metricProvisioningReason(currentFailure.Reason), duration)
+	}
+}
+
+func metricBackend(model *squallv1alpha1.Model) string {
+	switch len(model.Spec.Placement.Backends) {
+	case 0:
+		return "_none"
+	case 1:
+		return model.Spec.Placement.Backends[0]
+	default:
+		return "_multiple"
+	}
+}
+
+func metricProvisioningReason(reason string) string {
+	switch reason {
+	case squallv1alpha1.ReasonNoCapacity:
+		return "no_capacity"
+	case squallv1alpha1.ReasonInsufficientCredit:
+		return "insufficient_credit"
+	case squallv1alpha1.ReasonBackendRateLimited:
+		return "rate_limited"
+	default:
+		return "other"
+	}
 }
 
 // reportOverrideRefusal surfaces dstack's "cannot override active run" on the

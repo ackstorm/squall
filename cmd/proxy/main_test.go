@@ -18,7 +18,7 @@ import (
 // to LiteLLM discovery on every rollout.
 func TestHealthz_NotReadyUntilInformerSynced(t *testing.T) {
 	cache := proxy.NewCache()
-	mux := newMux(cache, proxy.NewActivityTracker(clock.RealClock{}), http.NotFoundHandler())
+	mux := newMux(cache, proxy.NewActivityTracker(clock.RealClock{}), http.NotFoundHandler(), http.NotFoundHandler())
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))

@@ -1,0 +1,20 @@
+{{- with .Values.controller.metricsBindAddress }}
+{{- if ne . "0" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: squall-controller-metrics
+  namespace: {{ $.Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: controller
+spec:
+  selector:
+    control-plane: controller-manager
+    app.kubernetes.io/name: squall
+  ports:
+  - name: metrics
+    port: {{ trimPrefix ":" . | int }}
+    targetPort: metrics
+{{- end }}
+{{- end }}

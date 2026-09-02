@@ -186,7 +186,8 @@ func main() {
 	ageMetrics := metrics.NewModelAgeCollector(nil)
 	priceMetrics := metrics.NewModelPriceCollector()
 	uncontrolledMetrics := metrics.NewUncontrolledCollector(internalclock.RealClock{})
-	ctrlmetrics.Registry.MustRegister(ageMetrics, priceMetrics, uncontrolledMetrics)
+	operationalMetrics := metrics.NewModelOperationalCollector()
+	ctrlmetrics.Registry.MustRegister(ageMetrics, priceMetrics, uncontrolledMetrics, operationalMetrics)
 
 	// ModelReconciler.DstackClient has no supported nil mode (see its own
 	// doc comment) — every real caller must set it, so fail fast rather
@@ -233,6 +234,7 @@ func main() {
 		AgeMetrics:          ageMetrics,
 		PriceMetrics:        priceMetrics,
 		UncontrolledMetrics: uncontrolledMetrics,
+		OperationalMetrics:  operationalMetrics,
 		// D65: verify a Ready replica serves what spec.model asked for,
 		// through dstack's own service proxy — the same base URL and
 		// token dstackClient above already uses.

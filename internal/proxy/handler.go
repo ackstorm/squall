@@ -110,6 +110,7 @@ type Handler struct {
 	Demand   *DemandCoalescer
 	Activity *ActivityTracker
 	Backend  Backend
+	Metrics  *ProxyMetrics
 
 	// DstackToken authenticates the FORWARDED request to dstack's own
 	// service proxy (LIVE-4). dstack's default per-service auth (`auth:
@@ -199,6 +200,17 @@ func (h *Handler) clock() clock.Clock {
 
 // ServeHTTP implements the six-row table end to end for one request.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	metricModel := "_unknown"
+	rec := requestRecord{outcome: outcomeImmediate}
+	mw := &metricResponseWriter{ResponseWriter: w}
+	w = mw
+	defer func() {
+		if h.Metrics != nil {
+			h.Metrics.Observe(metricModel, requestMetricOutcome(rec), mw.status, rec.held > 0, time.Since(started))
+		}
+	}()
+
 	model, errStatus := modelFromRequest(r)
 	if errStatus != 0 {
 		msg := `{"error":"missing model"}`
@@ -221,11 +233,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// NEVER add the request or response body here, nor any header: bodies are
 	// user prompts and model output, and headers carry the dstack bearer
 	// token (see Handler.DstackToken).
-	started := time.Now()
-	rec := requestRecord{model: model}
+	rec.model = model
 	defer func() { rec.log(r.Context(), time.Since(started)) }()
 
 	snap, hasCR := h.Cache.Get(model)
+	metricModel = modelMetricLabel(model, hasCR)
 
 	// D11: increment in-flight at accept time, before any upstream call —
 	// minimises a known TOCTOU window in §6's sleep decision.
@@ -241,6 +253,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if hasCR {
 		done := h.Activity.Begin(model)
 		defer done()
+		if h.Metrics != nil {
+			metricsDone := h.Metrics.Begin(metricModel)
+			defer metricsDone()
+		}
 	}
 	action := Decide(snap.Phase, hasCR, 0)
 	rec.phase = snap.Phase
@@ -290,6 +306,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer h.releasePending(model)
+		if h.Metrics != nil {
+			releaseMetricsHold := h.Metrics.Hold(metricModel)
+			defer releaseMetricsHold()
+		}
 
 		// §7: the held real request IS the serving path's readiness oracle.
 		// Each tick refreshes demand AND retries the actual forward; 502/503/
@@ -407,6 +427,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(action.ImmediateStatus)
 	default:
 		http.Error(w, "internal: Decide produced no action", http.StatusInternalServerError)
+	}
+}
+
+type metricResponseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *metricResponseWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *metricResponseWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *metricResponseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
 	}
 }
 

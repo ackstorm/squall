@@ -289,6 +289,7 @@ Full list in the [CHANGELOG](CHANGELOG.md); the running engineering ledger is
 | | |
 |---|---|
 | [docs/operating.md](docs/operating.md) | Running it: the direct SSH path, serving limits, deployment traps |
+| [docs/metrics.md](docs/metrics.md) | Prometheus endpoints, metric catalogue and optional ServiceMonitors |
 | [docs/specs/](docs/specs/) | The design of record — state machine, wait contract, provider boundary |
 | [docs/references/](docs/references/) | Toolchain traps, testing discipline, decisions, the findings ledger |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes and known limitations |

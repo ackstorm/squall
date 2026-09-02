@@ -136,6 +136,10 @@ func (r *ModelReconciler) reconcileDelete(ctx context.Context, model *squallv1al
 	if r.UncontrolledMetrics != nil {
 		r.UncontrolledMetrics.Forget(model.Namespace, model.Name)
 	}
+	if r.OperationalMetrics != nil {
+		r.OperationalMetrics.RecordTransition(model.Namespace, model.Name, metricBackend(model), "delete")
+		r.OperationalMetrics.Forget(model.Namespace, model.Name)
+	}
 
 	return ctrl.Result{}, nil
 }

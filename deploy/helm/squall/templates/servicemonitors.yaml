@@ -1,0 +1,29 @@
+{{- if .Values.serviceMonitor.enabled }}
+{{- range $component := list "controller" "proxy" "dstack" }}
+{{- if or (ne $component "dstack") $.Values.dstack.metrics.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: squall-{{ $component }}
+  namespace: {{ $.Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: {{ $component }}
+    {{- with $.Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: squall
+      app.kubernetes.io/component: {{ $component }}
+  endpoints:
+  - port: {{ if eq $component "controller" }}metrics{{ else }}http{{ end }}
+    path: /metrics
+    scheme: http
+    interval: {{ $.Values.serviceMonitor.interval }}
+    scrapeTimeout: {{ $.Values.serviceMonitor.scrapeTimeout }}
+{{- end }}
+{{- end }}
+{{- end }}
