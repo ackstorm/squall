@@ -334,6 +334,8 @@ helm-sync: ## Regenerate deploy/helm/squall/crds/ from config/crd/bases/ (Phase 
 _helm-sync: gen-manifests
 	mkdir -p deploy/helm/squall/crds
 	cp -f config/crd/bases/squall.ackstorm.ai_*.yaml deploy/helm/squall/crds/
+	mkdir -p deploy/helm/squall/files
+	awk '/^spec:/{f=1;next} f' config/prometheus/rules.yaml > deploy/helm/squall/files/prometheus-rule-spec.yaml
 
 .PHONY: helm-sync-check
 helm-sync-check: ## CI gate: fail if `make helm-sync` produced uncommitted diff (drift between the Model CRD and the chart).

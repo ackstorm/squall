@@ -1,24 +1,3 @@
-# PrometheusRule for the §10/AC19 declared/observed gauge pairs emitted by
-# internal/metrics (ModelAgeCollector, ModelPriceCollector). Both alerts
-# share one generic "observed > declared" shape (spec §10's "two-lane
-# rule": monitoring only ever reads metrics already emitted by the
-# controller, it never itself probes the gateway or engine) —
-# parameterised only by which metric pair each alert compares. Requires
-# the Prometheus Operator CRDs (monitoring.coreos.com/v1).
-#
-# SHIPPED by the chart: templates/prometheusrule.yaml renders this content
-# when prometheusRule.enabled is set. It was previously "NOT SHIPPED", which
-# mattered more than it looked: spec §5.2 makes maxLifetime ALERT-ONLY, so
-# with no rule installed nothing at all bounded a Model that never goes idle.
-apiVersion: monitoring.coreos.com/v1
-kind: PrometheusRule
-metadata:
-  labels:
-    app.kubernetes.io/name: squall
-    app.kubernetes.io/managed-by: kustomize
-  name: squall-model-metrics
-  namespace: system
-spec:
   groups:
     - name: squall.model-metrics
       rules:

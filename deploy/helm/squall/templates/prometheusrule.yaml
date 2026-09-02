@@ -1,0 +1,27 @@
+{{- /*
+spec §5.2 makes maxLifetime ALERT-ONLY: nothing in the controller stops a
+Model that never goes idle, the alert IS the control. The rules previously
+lived only in config/prometheus/rules.yaml, which the chart did not template,
+so a chart-only install had no such control at all.
+
+The body is synced from config/prometheus/rules.yaml by `make helm-sync`
+(same one-source-of-truth treatment as the CRDs), so the alerts cannot drift
+from the ones config/ declares.
+
+Requires the Prometheus Operator CRDs, hence off by default.
+*/}}
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: squall-model-metrics
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: monitoring
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+{{ .Files.Get "files/prometheus-rule-spec.yaml" }}
+{{- end }}

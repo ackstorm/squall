@@ -49,8 +49,8 @@ func TestRules_ObservedExceedsDeclaredShape(t *testing.T) {
 	}
 
 	rules := rule.Spec.Groups[0].Rules
-	if len(rules) != 2 {
-		t.Fatalf("rules = %d, want exactly 2 (age, price)", len(rules))
+	if len(rules) != 5 {
+		t.Fatalf("rules = %d, want exactly 5 (age, price, provisioning loop, uncontrolled, idle capacity)", len(rules))
 	}
 
 	for _, r := range rules {
@@ -66,6 +66,15 @@ func TestRules_ObservedExceedsDeclaredShape(t *testing.T) {
 	wantExprs := map[string]bool{
 		"squall_model_age_seconds > squall_model_max_lifetime_seconds":  false,
 		"squall_model_price_per_hour > squall_model_max_price_per_hour": false,
+		// spec §5.2 makes provisioningTimeout destroy each failed wake, but a
+		// caller that keeps retrying re-arms it forever: every attempt rents a
+		// machine until the deadline. Nothing in the controller bounds that, so
+		// it has to be visible.
+		"increase(squall_model_provisioning_attempts_total[1h]) > 6": false,
+		// the proxy stopped reporting: squall is flying blind on a live replica
+		"squall_model_uncontrolled_seconds > 0.5 * squall_model_uncontrolled_timeout_seconds": false,
+		// capacity is up while the Model is not Ready — paying for nothing
+		"squall_model_run_active > max by (namespace, name) (squall_model_phase{phase=\"Ready\"})": false,
 	}
 	for _, r := range rules {
 		if _, ok := wantExprs[r.Expr]; ok {
