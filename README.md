@@ -139,6 +139,16 @@ helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.5 \
   --set controller.env.dstackURL="http://dstack.squall-system.svc.cluster.local:3000"
 ```
 
+**Upgrading from an earlier version: apply the CRD by hand.** Helm installs `crds/` on
+install and *never* upgrades them, so `helm upgrade` alone leaves the Model CRD at whatever
+version you first installed — while reporting success. On 0.1.5 that silently costs you
+`spec.hardStop`, the one guardian that still works when squall-controller is dead:
+
+```bash
+kubectl apply --server-side -f \
+  https://github.com/ackstorm/squall/releases/download/v0.1.5/squall.ackstorm.ai_models.yaml
+```
+
 With no `dstack.backends`, dstack provisions onto your own cluster — no GPU, no bill, useful
 for trying the lifecycle end to end. The chart discovers the in-cluster SSH jump address;
 you do not need to supply a node IP. To rent real hardware, point it at a provider:
