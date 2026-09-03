@@ -2,10 +2,12 @@
 package metrics
 
 import (
-	"github.com/ackstorm/squall/internal/clock"
-	"github.com/prometheus/client_golang/prometheus"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/ackstorm/squall/internal/clock"
 )
 
 type IdleCollector struct {

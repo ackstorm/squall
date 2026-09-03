@@ -1,9 +1,10 @@
 package metrics
 
 import (
-	"github.com/ackstorm/squall/internal/clock"
 	"testing"
 	"time"
+
+	"github.com/ackstorm/squall/internal/clock"
 )
 
 func TestIdleCollector_EmitsOnlyForActiveRunsWithAnAnchor(t *testing.T) {
