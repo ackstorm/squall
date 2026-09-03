@@ -159,6 +159,7 @@ func main() {
 		Clock:              clock.RealClock{},
 		RefreshInterval:    envDuration("SQUALL_DEMAND_REFRESH_INTERVAL", defaultRefreshCeiling),
 		MaxPendingPerModel: envInt("SQUALL_MAX_PENDING_PER_MODEL", 0),
+		MaxRequestDuration: envDuration("SQUALL_MAX_REQUEST_DURATION", 45*time.Minute),
 		Metrics:            proxyMetrics,
 	}
 

@@ -27,6 +27,27 @@ func (b stubBackend) URL(string) (*url.URL, bool) {
 	return b.target, true
 }
 
+func TestHandler_RequestCeilingReleasesInFlight(t *testing.T) {
+	c := NewCache()
+	c.Set("m", ModelSnapshot{Phase: squallv1alpha1.ModelPhaseWaking, Schedulable: true, HoldTimeout: time.Hour})
+	h := newHandler(t, c, nil)
+	h.MaxRequestDuration = 50 * time.Millisecond
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { h.ServeHTTP(rec, chatRequest("m")); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request ceiling did not return")
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	if got := h.Activity.Report().Models["m"].InFlight; got != 0 {
+		t.Fatalf("inFlight=%d", got)
+	}
+}
+
 type noopPatcher struct{}
 
 func (noopPatcher) PatchDemand(context.Context, string, time.Time) error { return nil }

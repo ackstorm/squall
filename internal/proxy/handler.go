@@ -53,7 +53,10 @@ const (
 	// to a socket that is already closed, and nothing was learned about the
 	// replica. See the Activity.Failure guard in ServeHTTP.
 	outcomeClientGone = "client-gone"
+	outcomeCeiling    = "request-ceiling"
 )
+
+var errRequestCeiling = errors.New("squall-proxy: request ceiling reached")
 
 // requestRecord accumulates what one request did, so ServeHTTP's single
 // deferred log line can describe the whole lifecycle from any of its several
@@ -147,6 +150,7 @@ type Handler struct {
 	// unbounded. Beyond it, the wait contract is answered immediately
 	// instead of blocking (task 9's N+1-concurrent-holds test).
 	MaxPendingPerModel int
+	MaxRequestDuration time.Duration
 
 	pendingMu sync.Mutex
 	pending   map[string]int
@@ -251,6 +255,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// from the sleep decision — aggregateActivity's soundness argument
 	// ("Begin before any upstream call") is untouched.
 	if hasCR {
+		if h.MaxRequestDuration > 0 {
+			ctx, cancel := context.WithTimeoutCause(r.Context(), h.MaxRequestDuration, errRequestCeiling)
+			defer cancel()
+			r = r.WithContext(ctx)
+		}
 		done := h.Activity.Begin(model)
 		defer done()
 		if h.Metrics != nil {
@@ -357,6 +366,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.commit(w, committed, &rec)
 			return
 		}
+		if errors.Is(context.Cause(r.Context()), errRequestCeiling) {
+			rec.outcome = outcomeCeiling
+			rec.reason = errRequestCeiling.Error()
+			h.answerWait(w, Action{DeadlineStatus: http.StatusServiceUnavailable, DeadlineState: WaitWaking})
+			return
+		}
 
 		snap = newSnap
 		action = Decide(newSnap.Phase, newHasCR, 0)
@@ -383,7 +398,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			rec.held = time.Since(holdStart)
 		}
 		if res != attemptCommit {
-			if rerr := r.Context().Err(); rerr != nil {
+			if rerr := r.Context().Err(); rerr != nil && !errors.Is(context.Cause(r.Context()), errRequestCeiling) {
 				// THE CALLER HUNG UP. This says nothing whatsoever about the
 				// replica, and counting it as a failure is how `1->0 fails
 				// safe` gets violated: MEASURED LIVE 2026-08-31, a pkill of a
@@ -398,6 +413,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				// Nothing is written: the socket is already closed.
 				rec.outcome = outcomeClientGone
 				rec.reason = rerr.Error()
+				return
+			}
+			if errors.Is(context.Cause(r.Context()), errRequestCeiling) {
+				rec.outcome = outcomeCeiling
+				rec.reason = errRequestCeiling.Error()
+				h.answerWait(w, Action{DeadlineStatus: http.StatusServiceUnavailable, DeadlineState: WaitWaking})
 				return
 			}
 			// Ready in cache but the gateway is not serving: answer the wait
@@ -547,6 +568,11 @@ func (h *Handler) commit(w http.ResponseWriter, resp *http.Response, rec *reques
 	// A client that disconnects mid-stream is NOT the replica's failure, so it
 	// records neither a success nor a failure. The next request will.
 	if err := streamCommit(w, resp); err != nil {
+		if resp.Request != nil && errors.Is(context.Cause(resp.Request.Context()), errRequestCeiling) {
+			rec.outcome = outcomeCeiling
+			rec.reason = errRequestCeiling.Error()
+			return
+		}
 		slog.Warn("client disconnected mid-stream", "model", model, "err", err)
 		return
 	}

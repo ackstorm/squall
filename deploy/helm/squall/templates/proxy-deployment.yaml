@@ -45,6 +45,8 @@ spec:
             value: {{ .Values.proxy.env.demandRefreshInterval | quote }}
           - name: SQUALL_MAX_PENDING_PER_MODEL
             value: {{ .Values.proxy.env.maxPendingPerModel | quote }}
+          - name: SQUALL_MAX_REQUEST_DURATION
+            value: {{ .Values.proxy.env.maxRequestDuration | quote }}
           - name: SQUALL_DSTACK_URL
             value: {{ .Values.controller.env.dstackURL | quote }}
           # LIVE-4: dstack's service proxy demands a Bearer token by default.
