@@ -41,7 +41,7 @@ prometheusRule:
 
 controller:
   serviceAccountName: controller-manager
-  replicas: 1
+  replicas: 2
   leaderElect: true
   healthProbeBindAddress: ":8081"
   # The Prometheus endpoint, on by default. Empty (or "0") disables it.
@@ -501,6 +501,7 @@ dstack:
       # (see above); on VM backends set it to the node count you want warm.
       backends: [kubernetes]
       nodes: "0..2"
+      idleDuration: 10m
       resources:
         cpu: "1.."
         memory: "512MB.."
@@ -514,6 +515,7 @@ dstack:
     # - name: vast-live
     #   backends: [vastai]
     #   nodes: "0.."
+    #   idleDuration: 10m
     #   resources:
     #     cpu: "8.."
     #     memory: "32GB.."

@@ -8,6 +8,7 @@ package dstack
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -82,18 +83,26 @@ type resourcesWire struct {
 // §12.3's compliance allowlist and the CRD makes it mandatory, so it is the
 // one field here that must never be silently absent.
 type configurationWire struct {
-	Type      string            `json:"type"`
-	Name      string            `json:"name"`
-	Image     string            `json:"image"`
-	Port      int               `json:"port"`
-	Replicas  int               `json:"replicas"`
-	Probes    []probeConfigWire `json:"probes,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	Commands  []string          `json:"commands,omitempty"`
-	Resources *resourcesWire    `json:"resources,omitempty"`
-	Backends  []string          `json:"backends,omitempty"`
-	Regions   []string          `json:"regions,omitempty"`
-	MaxPrice  string            `json:"max_price,omitempty"`
+	Type         string            `json:"type"`
+	Name         string            `json:"name"`
+	Image        string            `json:"image"`
+	Port         int               `json:"port"`
+	Replicas     int               `json:"replicas"`
+	Probes       []probeConfigWire `json:"probes,omitempty"`
+	Env          map[string]string `json:"env,omitempty"`
+	Commands     []string          `json:"commands,omitempty"`
+	Resources    *resourcesWire    `json:"resources,omitempty"`
+	Backends     []string          `json:"backends,omitempty"`
+	Regions      []string          `json:"regions,omitempty"`
+	MaxPrice     string            `json:"max_price,omitempty"`
+	IdleDuration string            `json:"idle_duration,omitempty"`
+}
+
+func dstackDuration(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%ds", int64(d/time.Second))
 }
 
 type runSpecWire struct {
@@ -172,11 +181,12 @@ var fleetFloorResources = resourcesWire{
 // accepts "min..max" directly over the wire, exactly like the CLI-parsed
 // YAML form squall's fleet Job already uses.
 type fleetConfigurationWire struct {
-	Type      string        `json:"type"`
-	Name      string        `json:"name"`
-	Nodes     string        `json:"nodes"`
-	Resources resourcesWire `json:"resources"`
-	Backends  []string      `json:"backends,omitempty"`
+	Type         string        `json:"type"`
+	Name         string        `json:"name"`
+	Nodes        string        `json:"nodes"`
+	Resources    resourcesWire `json:"resources"`
+	Backends     []string      `json:"backends,omitempty"`
+	IdleDuration string        `json:"idle_duration,omitempty"`
 }
 
 // fleetSpecWire mirrors dstack's FleetSpec. Profile is a required field on

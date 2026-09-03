@@ -116,7 +116,8 @@ type ApplyRequest struct {
 	// allowlist and the CRD makes it mandatory (MinItems=1) — an empty
 	// Backends here means the eligibility table is not being enforced,
 	// which is the exact failure its own CRD comment warns about.
-	Placement Placement
+	Placement    Placement
+	IdleDuration time.Duration
 
 	// Current is the CAS anchor (F18). dstack's apply compares the ENTIRE
 	// previous Run object, not a deployment number: "Errors if the expected
@@ -182,8 +183,9 @@ type FleetSpec struct {
 	// Name should be built with FleetName so two callers asking for the
 	// same Backends land on the identical fleet instead of each minting
 	// their own.
-	Name     string
-	Backends []string
+	Name         string
+	Backends     []string
+	IdleDuration time.Duration
 }
 
 // FleetName derives EnsureFleet's fleet name from a single backend.

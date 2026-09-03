@@ -75,6 +75,7 @@ type ModelReconciler struct {
 	AgeMetrics          *metrics.ModelAgeCollector
 	PriceMetrics        *metrics.ModelPriceCollector
 	UncontrolledMetrics *metrics.UncontrolledCollector
+	IdleMetrics         *metrics.IdleCollector
 	OperationalMetrics  *metrics.ModelOperationalCollector
 
 	// IdleRequeueInterval is how often Reconcile re-evaluates an on-demand
@@ -456,7 +457,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 	logProvisioningTimeout(logger, action, &model, observedPerHour)
 	logUncontrolledIfNeeded(logger, action, uncontrolledSince, &model, observedPerHour)
-	r.recordMetrics(&model, observedPerHour, metricUncontrolledSince, now)
+	r.recordMetrics(&model, observedPerHour, metricUncontrolledSince, observed.Run != nil && observed.Run.Replicas > 0, now)
 	r.recordOperationalMetrics(&model, observed, original.Status, now)
 
 	// See IdleRequeueInterval's doc comment: an awake, on-demand Model
@@ -857,7 +858,7 @@ func (r *ModelReconciler) checkSchedulable(ctx context.Context, model *squallv1a
 	// comment). This is diagnosis, NOT a veto: 0->1 fails open, so a
 	// preflight that could not run, or that ran clean, never blocks
 	// the Apply below.
-	if reason, msg, fleets := preflight(ctx, r.DstackClient, enginePlacement(model.Spec.Placement).Backends); reason != "" {
+	if reason, msg, fleets := preflight(ctx, r.DstackClient, enginePlacement(model.Spec.Placement).Backends, model.Spec.Fleet.IdleDuration.Duration); reason != "" {
 		if fleets != nil {
 			model.Status.Fleet = fleets
 		}
@@ -897,7 +898,7 @@ func priceAsFloat64(p squallv1alpha1.Price) float64 {
 // side is real (in-memory since-RunID-changed, per ModelAgeCollector's own
 // doc comment); price's observed side comes from dstack's live replica
 // provisioning data, and is absent only when dstack reports no price.
-func (r *ModelReconciler) recordMetrics(model *squallv1alpha1.Model, observedPerHour float64, uncontrolledSince *metav1.Time, now time.Time) {
+func (r *ModelReconciler) recordMetrics(model *squallv1alpha1.Model, observedPerHour float64, uncontrolledSince *metav1.Time, runActive bool, now time.Time) {
 	if r.AgeMetrics != nil {
 		r.AgeMetrics.Observe(model.Namespace, model.Name, model.Status.RunID, model.Spec.MaxLifetime.Duration, now)
 	}
@@ -924,6 +925,14 @@ func (r *ModelReconciler) recordMetrics(model *squallv1alpha1.Model, observedPer
 			since = &t
 		}
 		r.UncontrolledMetrics.Observe(model.Namespace, model.Name, since, uncontrolledTimeoutFor(model.Spec))
+	}
+	if r.IdleMetrics != nil {
+		var last *time.Time
+		if model.Status.LastRequestAt != nil {
+			t := model.Status.LastRequestAt.Time
+			last = &t
+		}
+		r.IdleMetrics.Observe(model.Namespace, model.Name, last, runActive, time.Duration(model.Spec.ScaleDownDelaySeconds)*time.Second)
 	}
 }
 

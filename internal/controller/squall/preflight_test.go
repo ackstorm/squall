@@ -7,6 +7,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	squallv1alpha1 "github.com/ackstorm/squall/api/squall/v1alpha1"
 	"github.com/ackstorm/squall/internal/dstack"
@@ -22,7 +23,16 @@ type fakePreflight struct {
 	ensureFleetErr map[string]error
 	// ensured records every backend EnsureFleet was actually called for, so
 	// a test can assert it was (or was not) invoked.
-	ensured []string
+	ensured      []string
+	ensuredSpecs []dstack.FleetSpec
+}
+
+func TestPreflight_ThreadsIdleDurationOntoAutoFleet(t *testing.T) {
+	f := &fakePreflight{configured: map[string]bool{"vastai": true}, fleets: map[string]bool{"vastai": false}}
+	preflight(context.Background(), f, []string{"vastai"}, 7*time.Minute)
+	if len(f.ensuredSpecs) != 1 || f.ensuredSpecs[0].IdleDuration != 7*time.Minute {
+		t.Fatalf("specs=%+v", f.ensuredSpecs)
+	}
 }
 
 func (f *fakePreflight) BackendConfigured(_ context.Context, b string) (bool, error) {
@@ -34,6 +44,7 @@ func (f *fakePreflight) HasFleetFor(_ context.Context, b string) (bool, error) {
 
 func (f *fakePreflight) EnsureFleet(_ context.Context, spec dstack.FleetSpec) error {
 	f.ensured = append(f.ensured, spec.Backends...)
+	f.ensuredSpecs = append(f.ensuredSpecs, spec)
 	return f.ensureFleetErr[spec.Backends[0]]
 }
 
@@ -91,7 +102,7 @@ func TestPreflight_NamesTheActualProblem(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			reason, msg, _ := preflight(context.Background(), tc.fake, tc.backends)
+			reason, msg, _ := preflight(context.Background(), tc.fake, tc.backends, 0)
 			if reason != tc.wantReason {
 				t.Fatalf("reason = %q, want %q (msg %q)", reason, tc.wantReason, msg)
 			}
@@ -111,7 +122,7 @@ func TestPreflight_EnsureFleetIsCalledOnlyWhenNeeded(t *testing.T) {
 		configured: map[string]bool{"vastai": true},
 		fleets:     map[string]bool{"vastai": true},
 	}
-	preflight(context.Background(), fake, []string{"vastai"})
+	preflight(context.Background(), fake, []string{"vastai"}, 0)
 	if len(fake.ensured) != 0 {
 		t.Fatalf("EnsureFleet called %v, want none: a fleet already admits this backend", fake.ensured)
 	}
@@ -122,7 +133,7 @@ func TestPreflight_EnsureFleetIsCalledOnlyWhenNeeded(t *testing.T) {
 // always preferable to refusing to serve because a diagnostic call failed.
 func TestPreflight_FailsOpenWhenItCannotTell(t *testing.T) {
 	f := &fakePreflight{err: errors.New("dstack unreachable")}
-	if reason, _, _ := preflight(context.Background(), f, []string{"vastai"}); reason != "" {
+	if reason, _, _ := preflight(context.Background(), f, []string{"vastai"}, 0); reason != "" {
 		t.Fatalf("reason = %q, want none: an unreachable dstack is not proof of misconfiguration", reason)
 	}
 }
@@ -130,7 +141,7 @@ func TestPreflight_FailsOpenWhenItCannotTell(t *testing.T) {
 // TestPreflight_EmptyBackendListIsSchedulable: an empty spec.placement.backends
 // means "any configured backend", which squall cannot pre-check.
 func TestPreflight_EmptyBackendListIsSchedulable(t *testing.T) {
-	if reason, _, _ := preflight(context.Background(), &fakePreflight{}, nil); reason != "" {
+	if reason, _, _ := preflight(context.Background(), &fakePreflight{}, nil, 0); reason != "" {
 		t.Fatalf("reason = %q, want none for an unconstrained Model", reason)
 	}
 }
@@ -141,7 +152,7 @@ func TestPreflight_ReportsFleetStatePerBackend(t *testing.T) {
 		fleets:         map[string]bool{"vastai": true, "aws": false},
 		ensureFleetErr: map[string]error{},
 	}
-	_, _, fleets := preflight(context.Background(), c, []string{"vastai", "aws", "gcp"})
+	_, _, fleets := preflight(context.Background(), c, []string{"vastai", "aws", "gcp"}, 0)
 	want := []squallv1alpha1.FleetStatus{
 		// Admitting carries no Name (D149): HasFleetFor does not say WHICH
 		// fleet admits, and fabricating the auto name misled operators whose
@@ -161,7 +172,7 @@ func TestPreflight_UnfleetedWhenCreationFails(t *testing.T) {
 		fleets:         map[string]bool{"vastai": false},
 		ensureFleetErr: map[string]error{"vastai": errors.New("dstack said no")},
 	}
-	_, _, fleets := preflight(context.Background(), c, []string{"vastai"})
+	_, _, fleets := preflight(context.Background(), c, []string{"vastai"}, 0)
 	if len(fleets) != 1 || fleets[0].State != squallv1alpha1.FleetStateUnfleeted {
 		t.Fatalf("a failed EnsureFleet must report Unfleeted, got %+v", fleets)
 	}
@@ -169,7 +180,7 @@ func TestPreflight_UnfleetedWhenCreationFails(t *testing.T) {
 
 func TestPreflight_DstackErrorPublishesNoMirror(t *testing.T) {
 	c := &fakePreflight{err: errors.New("connection refused")}
-	reason, _, fleets := preflight(context.Background(), c, []string{"vastai"})
+	reason, _, fleets := preflight(context.Background(), c, []string{"vastai"}, 0)
 	if reason != "" || fleets != nil {
 		t.Fatalf("a dstack error must yield no reason and no mirror, got %q / %+v", reason, fleets)
 	}

@@ -9,10 +9,53 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/ackstorm/squall/internal/dstack"
 	"github.com/ackstorm/squall/internal/dstack/mock"
 )
+
+func TestHTTPClient_Apply_SendsIdleDuration(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == getPlanPath {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_, _ = w.Write([]byte(`{"run_spec":{},"current_resource":null,"action":"create"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"abc","jobs":[],"run_spec":{"configuration":{"replicas":{"min":1,"max":1}}}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
+	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{Name: "qwen", Replicas: 1, Image: "img", Port: 8080, IdleDuration: 10 * time.Minute}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := body["run_spec"].(map[string]any)["configuration"].(map[string]any)
+	if cfg["idle_duration"] != "600s" {
+		t.Fatalf("idle_duration = %v", cfg["idle_duration"])
+	}
+}
+
+func TestHTTPClient_Apply_OmitsIdleDurationWhenZero(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == getPlanPath {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_, _ = w.Write([]byte(`{"run_spec":{},"current_resource":null,"action":"create"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"abc","jobs":[],"run_spec":{"configuration":{"replicas":{"min":1,"max":1}}}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
+	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{Name: "qwen", Replicas: 1, Image: "img", Port: 8080}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := body["run_spec"].(map[string]any)["configuration"].(map[string]any)
+	if _, ok := cfg["idle_duration"]; ok {
+		t.Fatalf("idle_duration unexpectedly present")
+	}
+}
 
 const getPlanPath = "/api/project/main/runs/get_plan"
 const fleetGetPath = "/api/project/main/fleets/get"
