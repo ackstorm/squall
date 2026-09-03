@@ -96,6 +96,7 @@ type configurationWire struct {
 	Regions      []string          `json:"regions,omitempty"`
 	MaxPrice     string            `json:"max_price,omitempty"`
 	IdleDuration string            `json:"idle_duration,omitempty"`
+	MaxDuration  string            `json:"max_duration,omitempty"`
 }
 
 // dstackDuration renders dstack's whole-second duration wire format.
@@ -104,6 +105,13 @@ func dstackDuration(d time.Duration) string {
 		return ""
 	}
 	return fmt.Sprintf("%ds", int64(d/time.Second))
+}
+
+func wireSeconds(v *int) time.Duration {
+	if v == nil {
+		return 0
+	}
+	return time.Duration(*v) * time.Second
 }
 
 type runSpecWire struct {
@@ -279,7 +287,9 @@ type runWire struct {
 	RunSpec             struct {
 		RunName       string `json:"run_name"`
 		Configuration struct {
-			Replicas replicasWire `json:"replicas"`
+			Replicas     replicasWire `json:"replicas"`
+			IdleDuration *int         `json:"idle_duration"`
+			MaxDuration  *int         `json:"max_duration"`
 			// dstack echoes the probes it was created with. Reading
 			// ready_after from HERE rather than from a constant means
 			// readiness is judged against what this run actually has, even

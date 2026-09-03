@@ -151,6 +151,48 @@ func TestReconcile_EndpointSliceChurn_NoPrematureSleep(t *testing.T) {
 	}
 }
 
+func TestReconcile_SleepFlip_RunPredatesIdleDuration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("envtest")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	const name = "qwen-predates-idle"
+	spec := exampleModelSpec()
+	spec.ScaleDownDelaySeconds = 1
+	model := &squallv1alpha1.Model{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: manualNamespace, Finalizers: []string{ModelFinalizer}}, Spec: spec}
+	if err := k8sClient.Create(ctx, model); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dstackClient.Apply(ctx, dstack.ApplyRequest{Name: runNameIn(manualNamespace, name), Replicas: 1}); err != nil {
+		t.Fatal(err)
+	}
+	ip := nonLoopbackIP(t)
+	srv, _ := nonLoopbackActivityServer(t, ip, squallv1alpha1.ActivityReport{Models: map[string]squallv1alpha1.ModelActivity{name: {InFlight: 0, LastRequestAt: time.Now().UTC().Add(-time.Hour)}}})
+	proxyKey := types.NamespacedName{Namespace: manualNamespace, Name: "squall-proxy-predates"}
+	if err := k8sClient.Create(ctx, endpointSliceForAddr(t, "predates-a", manualNamespace, srv.Listener.Addr().String(), proxyKey.Name)); err != nil {
+		t.Fatal(err)
+	}
+	spy := &spyApplyClient{Client: dstackClient}
+	r := &ModelReconciler{Client: k8sClient, DstackClient: spy, ProxyService: proxyKey}
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(model)}); err != nil {
+		t.Fatal(err)
+	}
+	spy.mu.Lock()
+	got := spy.lastApply
+	spy.mu.Unlock()
+	if got.IdleDuration != 0 {
+		t.Fatalf("sleep IdleDuration = %v, want 0 for pre-upgrade run", got.IdleDuration)
+	}
+	updated := &squallv1alpha1.Model{}
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status.Phase != squallv1alpha1.ModelPhaseAsleep {
+		t.Fatalf("phase = %q, want Asleep", updated.Status.Phase)
+	}
+}
+
 func endpointSliceForAddr(t *testing.T, name, namespace, addr, serviceName string) *discoveryv1.EndpointSlice {
 	t.Helper()
 	host, port := splitHostPort(t, addr)

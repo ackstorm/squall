@@ -238,6 +238,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			return ctrl.Result{}, err
 		}
 		r.recordProvisioningAttempt(&model, action)
+		idle, hard := applyDurationsFor(&model, action)
 		run, err := r.DstackClient.Apply(ctx, dstack.ApplyRequest{
 			Name:     runName,
 			Replicas: action.Replicas,
@@ -248,12 +249,14 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			// stable across a Model being deleted and recreated, so without
 			// this there is nothing to tell a surviving run apart from one
 			// this Model minted (see ownership.go).
-			Env:       applyEnv,
-			Args:      engineCommands(model.Spec, model.Name),
-			Resources: engineResources(model.Spec.Resources),
-			Placement: enginePlacement(model.Spec.Placement),
-			Current:   action.Current,
-			SSHKeyPub: sshKeyPub,
+			Env:          applyEnv,
+			Args:         engineCommands(model.Spec, model.Name),
+			Resources:    engineResources(model.Spec.Resources),
+			Placement:    enginePlacement(model.Spec.Placement),
+			Current:      action.Current,
+			SSHKeyPub:    sshKeyPub,
+			IdleDuration: idle,
+			MaxDuration:  hard,
 		})
 		if err != nil {
 			r.recoverFromOverrideRefusal(ctx, logger, &model, original, action, runName, err)
@@ -540,6 +543,8 @@ func metricBackend(model *squallv1alpha1.Model) string {
 
 func metricProvisioningReason(reason string) string {
 	switch reason {
+	case squallv1alpha1.ReasonHardStopFired:
+		return "hard_stop"
 	case squallv1alpha1.ReasonNoCapacity:
 		return "no_capacity"
 	case squallv1alpha1.ReasonInsufficientCredit:
@@ -653,6 +658,8 @@ func reportProvisioningCondition(model *squallv1alpha1.Model, failure *dstack.Pr
 	text := strings.ToLower(failure.Reason + " " + detail)
 	reason := squallv1alpha1.ReasonProvisioningFailed
 	switch {
+	case strings.Contains(text, "max_duration"):
+		reason = squallv1alpha1.ReasonHardStopFired
 	case strings.Contains(text, "insufficient_credit"), strings.Contains(text, "insufficient credit"):
 		reason = squallv1alpha1.ReasonInsufficientCredit
 	case strings.Contains(text, "429"), strings.Contains(text, "too many requests"), strings.Contains(text, "rate limit"):
@@ -774,6 +781,17 @@ func (r *ModelReconciler) applyEnvFor(ctx context.Context, model *squallv1alpha1
 		return action.Current.Env, action.Current.SSHKeyPub, nil
 	}
 	return withModelUID(nil, model), "", nil
+}
+
+func applyDurationsFor(model *squallv1alpha1.Model, action Action) (idle, hard time.Duration) {
+	if action.Replicas == 0 && action.Current != nil {
+		return action.Current.IdleDuration, action.Current.MaxDuration
+	}
+	idle = model.Spec.Fleet.IdleDuration.Duration
+	if model.Spec.MinReplicas == 0 {
+		hard = model.Spec.HardStop.Duration
+	}
+	return idle, hard
 }
 
 // checkSchedulable runs Task 5's two wake-time diagnostics (D58, D67, and

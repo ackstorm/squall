@@ -94,6 +94,7 @@ const (
 	// ReasonNoSuccessfulResponses accompanies ConditionHealthy=False: the
 	// replica was taking traffic and delivering nothing.
 	ReasonNoSuccessfulResponses = "NoSuccessfulResponses"
+	ReasonHardStopFired         = "HardStopFired"
 
 	// ReasonHealthy accompanies ConditionHealthy=True, set whenever a fresh run
 	// is minted. A new run has never been judged, and inheriting the previous

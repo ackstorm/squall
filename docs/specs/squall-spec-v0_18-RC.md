@@ -187,6 +187,7 @@ load-bearing for this design:
 | F32 | KubeAI's hold **blocks**: `AwaitBestAddress(ctx, …)` writes nothing to the client while waiting and answers `504` on `context.DeadlineExceeded`. LiteLLM applies no wall-clock deadline to a request — httpx bounds the gap between chunks — so raised `timeout`/`stream_timeout` suffice at that hop | source: kubeai `internal/modelproxy/handler.go` (verified in source) + litellm internals (implementer-verified) |
 | F33 | dstack's native `GPUSpec` carries `vendor`, `name: List[str]` (backend-agnostic), `count: Range`, `memory: Range` (`"24GB..32GB"`), `total_memory`, `compute_capability` — the CR passes it through; no invented GPU schema and no translation layer | source: `core/models/resources.py` (verified in source) |
 | F35 | dstack services carry **first-class HTTP probes** (`ProbeConfig`: `ready_after`, `until_ready`), and **per-probe state is exposed on the API** the client already consumes: `JobSubmission.probes: list[Probe]`, alongside `submitted_at`/`age`. The §6 readiness chain exists end-to-end in dstack; squall only reads it | source: `core/models/configurations.py`, `core/models/runs.py` (verified in source) |
+| F36 | `max_duration` stops a fixed `replicas: 1` service; it does not respawn. `MAX_DURATION_EXCEEDED` maps to `JobStatus.TERMINATED` (not `FAILED`), so no retry event is produced and the run transitions to `TERMINATING`. Enforcement is in the runner inside the container, not a server background task | source-verified in deployed dstack 0.21.2; wire confirmed `max_duration: "2m"` → `job_spec.max_duration: 120` |
 | F34 | Launch is **one OCI image everywhere; how it lands differs per backend and matters to nothing declared**: Vast is `dockerized=False` — the model image *is* the instance (`create_instance(image_name=…, onstart=…, registry_auth=…)`); AWS and DigitalOcean are `dockerized=True` — dstack's AMI boots, `dstack-shim` pulls and runs the image inside the VM. Vast-console "templates" are unused. Consequences: images MUST be userspace-only (drivers come from the AMI or the marketplace host), cold-start curves differ in shape (pull-at-create vs boot-then-pull), and `registry_auth` travels to the provider host on Vast | source: `backends/vastai/compute.py`, `backends/aws/compute.py` ("because `dstack-shim` is used"), `backends/digitalocean_base/compute.py` (verified in source) |
 
 Consequences of F7/F8/F11 are handled in §12; F12 in §12.3 and AC1; F13 in §8/PoC 8; F14 in §5.2 and §6; F15–F18 define §6's flip mechanism and §5.2's concurrency rules; F19 in §12.2.6; F20 in §5.2/§7; F21 in §5.1/§6/PoC 4; F22 in §12.2; F23 in §7; F24 in §8; F25 in §10; F26 in §12.1 (and applies to the squall-proxy); F27–F28 in §5/§7; F29 re-derives §12.3's region analysis and closes the P-family quota question; F30–F31 shape PoC 10; F32 is the basis of §7's blocking hold; F33 is §5.1's GPU passthrough; F34 is §8's launch model and §9's registry rule; F35 is §6's `Ready` evidence and §5.2's age anchor.
@@ -241,6 +242,7 @@ spec:
   drainTimeout: 120s
   provisioningTimeout: 45m          # the one destructive safety (§5.2)
   maxLifetime: 168h                 # ALERT-ONLY; exported as a metric pair (§10)
+  hardStop: 24h                     # DEAD-MAN'S SWITCH; on-demand only (§5.2, F36)
 status:
   phase: Asleep | Waking | Ready | Draining | Recreating | Dead
   runId: "..."                      # mutable pointer (F20)
@@ -315,6 +317,9 @@ One reconciler (Go, controller-runtime — the house pattern), watching
   phase Dead. **`maxLifetime` is ALERT-ONLY**, never destructive, never
   implemented via dstack's native `max_duration` (F14, F20: a native hard
   stop is a scheduled outage plus full recreate).
+  **`hardStop` is a separate, on-demand-only exception:** it is dstack's
+  `max_duration`, enforced by the runner inside the container, so it survives
+  the controller dying (F36). Firing is an incident, not routine operation.
 - **Reconcile loop** (periodic, independent of events): diff CRs ↔ dstack
   runs/fleets and converge. Provider-billing triangulation is a **manual
   drill at v0.1 scale** — a human against the invoice and `dstack ps`, the
@@ -990,6 +995,9 @@ LiteLLM API.
 19. Metric pairs (§10): declared and observed gauges exist for
     `maxLifetime` and `maxPricePerHour`, and the generic `observed >
     declared` rule fires in a test for both.
+20. `hardStop` reaches dstack as `max_duration` on every wake of an on-demand
+    Model and on no apply for a pinned one; a run that hits it goes terminal
+    without a replacement replica and is `Dead` with an alarm, not `Asleep`.
 
 ---
 

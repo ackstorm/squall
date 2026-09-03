@@ -284,6 +284,8 @@ const MaxUncontrolledTimeout = 2 * time.Hour
 // an unbounded bill; runtime clamps edits to already-awake Models too.
 const MaxExplicitUncontrolledTimeout = 24 * time.Hour
 
+const MinHardStop = time.Hour
+
 func uncontrolledTimeoutFor(spec squallv1alpha1.ModelSpec) time.Duration {
 	if spec.UncontrolledTimeout != nil && spec.UncontrolledTimeout.Duration > 0 {
 		d := spec.UncontrolledTimeout.Duration

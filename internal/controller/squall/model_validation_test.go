@@ -68,6 +68,42 @@ func TestValidate_UncontrolledTimeoutBounds(t *testing.T) {
 	}
 }
 
+func TestValidate_HardStopBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		hard, unctrl time.Duration
+		wantErr      bool
+	}{
+		{"ordinary", 24 * time.Hour, 90 * time.Minute, false}, {"minimum", time.Hour, 30 * time.Minute, false},
+		{"below minimum", 30 * time.Minute, 20 * time.Minute, true}, {"before deadline", 2 * time.Hour, 3 * time.Hour, true}, {"zero", 0, 90 * time.Minute, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := exampleModelSpec()
+			spec.HardStop = metav1.Duration{Duration: tc.hard}
+			spec.UncontrolledTimeout = &metav1.Duration{Duration: tc.unctrl}
+			_, err := ValidateWithWarnings(spec)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err=%v wantErr=%v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidate_HardStopZeroWarns(t *testing.T) {
+	spec := exampleModelSpec()
+	spec.HardStop = metav1.Duration{}
+	warnings, err := ValidateWithWarnings(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w, "hardStop") {
+			return
+		}
+	}
+	t.Fatal("expected hardStop warning")
+}
+
 // TestValidate_HoldTimeoutExceedsProvisioningTimeout covers spec §5.1's
 // deadline ordering: "Deadlines are ordered: holdTimeout ≤
 // provisioningTimeout". A hold that outlives the destructive provisioning

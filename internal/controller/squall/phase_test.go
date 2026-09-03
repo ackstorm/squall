@@ -123,6 +123,7 @@ func TestDecide_BoundMatrix(t *testing.T) {
 		{"uncontrolled zero uses default", func() squallv1alpha1.ModelSpec { s := spec; s.UncontrolledTimeout = &zero; return s }(), Observed{Run: run, Ready: true, Activity: incomplete}, squallv1alpha1.ModelStatus{WakeStartedAt: ago(2 * time.Hour), UncontrolledSince: ago(30 * time.Minute)}, false, squallv1alpha1.ModelPhaseAsleep, true, 0},
 		{"provisioning timeout", spec, Observed{Run: run, Ready: false, Activity: incomplete}, squallv1alpha1.ModelStatus{WakeStartedAt: ago(25 * time.Minute)}, true, squallv1alpha1.ModelPhaseDead, true, 0},
 		{"pinned never sleeps", pinned, Observed{Run: run, Ready: true, Activity: idle}, squallv1alpha1.ModelStatus{WakeStartedAt: ago(48 * time.Hour)}, false, squallv1alpha1.ModelPhaseReady, false, 1},
+		{"hard stop fired -> Dead with an alarm, never Asleep", spec, Observed{Run: nil}, squallv1alpha1.ModelStatus{RunID: "r1"}, false, squallv1alpha1.ModelPhaseDead, false, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

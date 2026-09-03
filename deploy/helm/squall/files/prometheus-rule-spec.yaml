@@ -80,3 +80,11 @@
           annotations:
             summary: squall-controller is not reporting
             description: No scrape has seen the Model controller for 10m; every 1-to-0 guardian is silent.
+        - alert: SquallModelHardStopFired
+          expr: increase(squall_model_provisioning_outcomes_total{reason="hard_stop"}[1h]) > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: Model {{ $labels.name }} was stopped by its hardStop dead-man's switch
+            description: spec.hardStop elapsed and dstack terminated the job; investigate the dead controller or guardian.

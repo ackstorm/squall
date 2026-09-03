@@ -16,11 +16,15 @@ out explicitly, because that is the class of change worth reading twice.
 - **Money:** `spec.fleet.idleDuration` now reaches dstack on runs and fleets.
 - **Money:** stuck proxy requests have a 45m end-to-end ceiling.
 - `uncontrolledTimeout` no longer permits an unbounded deadline.
+- The sleep flip re-sends the value stored by the running dstack run, so
+  pre-upgrade runs remain sleepable instead of billing indefinitely (D156).
 
 ### Added
 
 - Idle-capacity gauges and alerts for idle-but-awake Models and an absent controller.
 - Controller replicas now default to 2.
+- `spec.hardStop` adds an on-demand dead-man's switch via dstack `max_duration`;
+  firing is reported as an incident and alerts critically.
 
 ## [0.1.4] — 2026-09-02
 

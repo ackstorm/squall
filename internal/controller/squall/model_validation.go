@@ -42,6 +42,14 @@ func ValidateWithWarnings(spec squallv1alpha1.ModelSpec) ([]string, error) {
 			return nil, fmt.Errorf("uncontrolledTimeout (%s) exceeds the %s maximum", u.Duration, MaxExplicitUncontrolledTimeout)
 		}
 	}
+	if h := spec.HardStop.Duration; h > 0 {
+		if h < MinHardStop {
+			return nil, fmt.Errorf("hardStop (%s) must be at least %s", h, MinHardStop)
+		}
+		if h < uncontrolledTimeoutFor(spec) {
+			return nil, fmt.Errorf("hardStop (%s) must not be shorter than the uncontrolled deadline (%s)", h, uncontrolledTimeoutFor(spec))
+		}
+	}
 
 	if spec.HoldTimeout.Duration > spec.ProvisioningTimeout.Duration {
 		return nil, fmt.Errorf("holdTimeout (%s) must not exceed provisioningTimeout (%s): a hold that can outlive the destructive provisioning deadline can never be satisfied by a successful wake",
@@ -54,6 +62,9 @@ func ValidateWithWarnings(spec squallv1alpha1.ModelSpec) ([]string, error) {
 		warnings = append(warnings, fmt.Sprintf(
 			"holdTimeout (%s) exceeds the warm window (%s = scaleDownDelaySeconds + fleet.idleDuration): most wakes will pay a full cold start, which is a misconfiguration in all but intent",
 			spec.HoldTimeout.Duration, warmWindow))
+	}
+	if spec.HardStop.Duration == 0 && spec.MinReplicas == 0 {
+		warnings = append(warnings, "hardStop is disabled: nothing will stop this Model's capacity if the controller dies")
 	}
 
 	return warnings, nil

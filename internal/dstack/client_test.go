@@ -57,8 +57,76 @@ func TestHTTPClient_Apply_OmitsIdleDurationWhenZero(t *testing.T) {
 	}
 }
 
+func TestHTTPClient_Apply_SendsMaxDuration(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == getPlanPath {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_, _ = w.Write([]byte(`{"run_spec":{},"current_resource":null,"action":"create"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"abc","jobs":[],"run_spec":{"configuration":{"replicas":{"min":1,"max":1}}}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
+	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{Name: "qwen", Replicas: 1, Image: "img", Port: 8080, MaxDuration: 24 * time.Hour}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := body["run_spec"].(map[string]any)["configuration"].(map[string]any)
+	if cfg["max_duration"] != "86400s" {
+		t.Fatalf("max_duration = %v", cfg["max_duration"])
+	}
+}
+
+func TestHTTPClient_Apply_OmitsMaxDurationWhenZero(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == getPlanPath {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_, _ = w.Write([]byte(`{"run_spec":{},"current_resource":null,"action":"create"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"abc","jobs":[],"run_spec":{"configuration":{"replicas":{"min":1,"max":1}}}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
+	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{Name: "qwen", Replicas: 1, Image: "img", Port: 8080}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := body["run_spec"].(map[string]any)["configuration"].(map[string]any)
+	if _, ok := cfg["max_duration"]; ok {
+		t.Fatalf("max_duration unexpectedly present")
+	}
+}
+
 const getPlanPath = "/api/project/main/runs/get_plan"
 const fleetGetPath = "/api/project/main/fleets/get"
+
+func TestHTTPClient_Get_DecodesStoredIdleDuration(t *testing.T) {
+	for _, tc := range []struct {
+		name, echo string
+		want       time.Duration
+	}{
+		{"stored value", `600`, 10 * time.Minute},
+		{"pre-upgrade run stores none", `null`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"abc","status":"running","jobs":[],"run_spec":{"run_name":"qwen","configuration":{"replicas":{"min":1,"max":1},"idle_duration":` + tc.echo + `}}}`))
+			}))
+			t.Cleanup(srv.Close)
+			c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
+			run, err := c.Get(context.Background(), "qwen")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if run.IdleDuration != tc.want {
+				t.Fatalf("IdleDuration = %v, want %v", run.IdleDuration, tc.want)
+			}
+		})
+	}
+}
 
 // TestHTTPClient_Apply_IsTwoStepAndNeverForces walks the MEASURED apply
 // contract: get_plan first, then apply echoing the server's own normalised

@@ -267,6 +267,7 @@ func runSpec(req ApplyRequest) runSpecWire {
 			Regions:      req.Placement.Regions,
 			MaxPrice:     req.Placement.MaxPrice,
 			IdleDuration: dstackDuration(req.IdleDuration),
+			MaxDuration:  dstackDuration(req.MaxDuration),
 		},
 	}
 }
@@ -347,6 +348,8 @@ func decodeRun(body []byte) (*Run, error) {
 		ProbesReady:         probesReady(w.Jobs, w.DeploymentNum, echoedReadyAfter(w)),
 		Env:                 w.RunSpec.Configuration.Env,
 		SSHKeyPub:           w.RunSpec.SSHKeyPub,
+		IdleDuration:        wireSeconds(w.RunSpec.Configuration.IdleDuration),
+		MaxDuration:         wireSeconds(w.RunSpec.Configuration.MaxDuration),
 		Status:              w.Status,
 		SubmittedAt:         w.SubmittedAt,
 		ProvisioningFailure: decodeProvisioningFailure(w),

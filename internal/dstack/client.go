@@ -120,6 +120,7 @@ type ApplyRequest struct {
 	// IdleDuration is the Model's fleet idle window, sent to dstack in whole
 	// seconds. Zero omits it; callers should use the required CRD value.
 	IdleDuration time.Duration
+	MaxDuration  time.Duration
 
 	// Current is the CAS anchor (F18). dstack's apply compares the ENTIRE
 	// previous Run object, not a deployment number: "Errors if the expected
@@ -262,7 +263,9 @@ type Run struct {
 	// name is stable across a Model being deleted and recreated while the
 	// Kubernetes UID is not — so this is what tells "my run" apart from "a
 	// run left by a previous incarnation of a Model with the same name".
-	Env map[string]string
+	Env          map[string]string
+	IdleDuration time.Duration
+	MaxDuration  time.Duration
 
 	// SSHKeyPub is the run's OWN key, echoed off run_spec. Read back so a
 	// replica-count-only Apply (the sleep flip) can reproduce the active

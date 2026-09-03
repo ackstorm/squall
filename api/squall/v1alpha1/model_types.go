@@ -430,6 +430,12 @@ type ModelSpec struct {
 	// pinned GPU everyone forgot about.
 	// +optional
 	MaxLifetime metav1.Duration `json:"maxLifetime,omitempty"`
+
+	// HardStop is an on-demand-only dead-man's switch sent as dstack
+	// max_duration and enforced by the runner. Zero disables it with warning.
+	// +kubebuilder:default="24h"
+	// +optional
+	HardStop metav1.Duration `json:"hardStop,omitempty"`
 }
 
 // ModelHealth is squall's answer to "is this replica worth paying for?" for a

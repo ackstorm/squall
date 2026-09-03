@@ -33,6 +33,34 @@ func TestUpdateActivityStatus_LastRequestAtNeverGoesBackwards(t *testing.T) {
 	}
 }
 
+func TestApplyDurationsFor_DirectionAndHardStop(t *testing.T) {
+	onDemand := &squallv1alpha1.Model{Spec: squallv1alpha1.ModelSpec{MinReplicas: 0, HardStop: metav1.Duration{Duration: 24 * time.Hour}, Fleet: squallv1alpha1.ModelFleet{IdleDuration: metav1.Duration{Duration: 10 * time.Minute}}}}
+	pinned := &squallv1alpha1.Model{Spec: squallv1alpha1.ModelSpec{MinReplicas: 1, HardStop: metav1.Duration{Duration: 24 * time.Hour}, Fleet: squallv1alpha1.ModelFleet{IdleDuration: metav1.Duration{Duration: 10 * time.Minute}}}}
+	if idle, hard := applyDurationsFor(onDemand, Action{Replicas: 0, Current: &dstack.Run{Replicas: 1}}); idle != 0 || hard != 0 {
+		t.Fatalf("pre-upgrade sleep = %v/%v", idle, hard)
+	}
+	if idle, hard := applyDurationsFor(onDemand, Action{Replicas: 0, Current: &dstack.Run{Replicas: 1, IdleDuration: 5 * time.Minute, MaxDuration: 12 * time.Hour}}); idle != 5*time.Minute || hard != 12*time.Hour {
+		t.Fatalf("stored sleep = %v/%v", idle, hard)
+	}
+	if idle, hard := applyDurationsFor(onDemand, Action{Replicas: 1, Current: &dstack.Run{Replicas: 0}}); idle != 10*time.Minute || hard != 24*time.Hour {
+		t.Fatalf("wake = %v/%v", idle, hard)
+	}
+	if _, hard := applyDurationsFor(pinned, Action{Replicas: 1}); hard != 0 {
+		t.Fatalf("pinned hard = %v", hard)
+	}
+}
+
+func TestReportProvisioningCondition_MaxDurationIsAHardStop(t *testing.T) {
+	model := &squallv1alpha1.Model{}
+	reportProvisioningCondition(model, &dstack.ProvisioningFailure{RunID: "r1", Reason: "max_duration_exceeded", Message: "max duration exceeded"}, squallv1alpha1.ModelPhaseDead)
+	for _, c := range model.Status.Conditions {
+		if c.Type == squallv1alpha1.ConditionProvisioning && c.Reason == squallv1alpha1.ReasonHardStopFired {
+			return
+		}
+	}
+	t.Fatal("max_duration must classify as HardStopFired")
+}
+
 func TestUpdateActivityStatus_WakeSeedsAnchor(t *testing.T) {
 	woke := metav1.NewTime(time.Unix(100, 0))
 	model := &squallv1alpha1.Model{Status: squallv1alpha1.ModelStatus{WakeStartedAt: &woke}}
