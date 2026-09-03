@@ -505,6 +505,14 @@ dstack:
       # (see above); on VM backends set it to the node count you want warm.
       backends: [kubernetes]
       nodes: "0..2"
+      # How long an idle machine is kept before the fleet releases it.
+      # REQUIRED and undefaulted: on a VM backend dstack's own default is
+      # 3 days. It binds on VM backends ONLY — dstack gates idle release on
+      # an internal `dockerized` flag, which is false for Kubernetes and for
+      # Vast.ai, and there the idle window is forced to zero and this value
+      # is never read (ledger D158). So on this kind fleet the 10m below is
+      # inert; it is written out because the same key on a VM-backed fleet
+      # is the most expensive one in this file.
       idleDuration: 10m
       resources:
         cpu: "1.."

@@ -11,7 +11,20 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
-Nothing yet.
+### Documentation
+
+- Corrected what `fleet.idleDuration` actually does per backend. dstack gates
+  idle release on an internal `dockerized` flag: on **Vast.ai and Kubernetes**
+  it is false, dstack forces the idle window to zero and never reads the
+  value, so the field is inert there and the instance is released on the first
+  pass after the job stops. The 3-day default this project calls "the single
+  most expensive footgun" binds on VM backends only. The consequence worth
+  knowing: **there is no warm pool on Vast** — every wake is a full cold
+  provision, so `holdTimeout` has to cover one. Source-verified against the
+  deployed 0.21.2, not measured. Ledger D158, spec F21b,
+  `docs/references/dstack-real-api.md` §9.9. The CRD field description changed
+  with it; the field stays required, because it does bind on VM backends and
+  the chart cannot know which backend a fleet will draw from.
 
 ## [0.1.5] — 2026-09-03
 

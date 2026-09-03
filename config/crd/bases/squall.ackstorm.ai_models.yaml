@@ -145,11 +145,19 @@ spec:
                     description: |-
                       IdleDuration is how long the underlying machine is kept after the
                       job-layer flip to replicas: 0 before the fleet releases it (§6).
-                      It is REQUIRED with NO default: dstack's own default is 3 days
-                      (F21), the single most expensive footgun in the system — an
-                      operator who forgets this field pays for an idle GPU for three days,
-                      not minutes. It also directly conditions §7: `hold` is only viable
-                      inside this warm window.
+                      It is REQUIRED with NO default: on a VM backend dstack's own default
+                      is 3 days (F21), the single most expensive footgun in the system —
+                      an operator who forgets this field pays for an idle GPU for three
+                      days, not minutes. It also directly conditions §7: `hold` is only
+                      viable inside this warm window.
+
+                      It binds on VM backends only, and dstack decides that by the
+                      `dockerized` flag rather than by anything configurable here (F21b,
+                      D158). On Vast.ai and on Kubernetes the flag is false, dstack forces
+                      the idle window to zero and never reads this value: the instance is
+                      released on the first pass after the job stops. There the field is
+                      inert — and so is the warm pool, so every wake there is a full cold
+                      provision and `holdTimeout` has to cover one.
                     type: string
                 required:
                 - idleDuration

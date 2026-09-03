@@ -444,3 +444,64 @@ database reset, a manual delete, a project rename) is a silent, permanent dead e
 backend until something OUTSIDE the run path — squall's own `EnsureFleet`, or a human —
 creates one. This is what makes LIVE-7 possible and what the fix (§ preflight remediation,
 `internal/controller/squall/preflight.go`) closes.
+
+### 9.9 `idle_duration` is gated on `dockerized`, and Vast.ai fails the gate — SOURCE-VERIFIED 2026-09-03
+
+Read from the deployed **0.21.2** (`squall-system/dstack-*`, package under
+`/root/.local/share/uv/tools/dstack/lib/python3.11/site-packages/dstack/_internal`).
+
+F21 carried the phrase *"only applied for VM-based backends"* as a caveat to verify. It is
+not a caveat. It is a hard branch, and the discriminator is `JobProvisioningData.dockerized`:
+
+```python
+# server/background/pipeline_tasks/jobs_submitted.py:1793  (_create_instance_model_for_job)
+if not job_provisioning_data.dockerized:
+    termination_policy = TerminationPolicy.DESTROY_AFTER_IDLE
+    termination_idle_time = 0          # the profile's idle_duration is never read
+else:
+    termination_policy, termination_idle_time = get_termination(
+        profile, DEFAULT_RUN_TERMINATION_IDLE_TIME
+    )
+```
+
+`_promote_placeholder_instance` (line 1834) repeats it verbatim, so both provisioning paths
+agree. The terminator then acts on the stamped value:
+
+```python
+# server/background/pipeline_tasks/instances/check.py:92
+idle_duration = get_instance_idle_duration(instance_model)
+if idle_duration <= timedelta(seconds=instance_model.termination_idle_time):
+    return None
+```
+
+With `termination_idle_time = 0` any idle time terminates — the first background pass after
+the job stops.
+
+| Backend | `dockerized` | `idle_duration` honoured |
+|---|---|---|
+| AWS | `True` (`aws/compute.py:418`, *"because `dstack-shim` is used"*) | yes |
+| Vast.ai | `False` (`vastai/compute.py:173`) | **no** |
+| Kubernetes | `False` (`kubernetes/compute.py:339`) | **no** |
+| RunPod | `False` (`runpod/compute.py:240`, `:337`) | **no** |
+
+Second, independent confirmation for Vast: `VastAICompute` mixes in only
+`ComputeWithFilteredOffersCached, Compute` — no `ComputeWithCreateInstanceSupport`, which
+AWS carries at `aws/compute.py:122`. §9.2's rule means a Vast fleet must declare
+`nodes` target 0, so Vast never pre-provisions a standalone instance: every Vast instance is
+job-provisioned and therefore routed through the branch above. There is no path by which a
+fleet's `idle_duration` reaches a Vast instance.
+
+`idle_duration: -1` (`DONT_DESTROY`) is unreachable for the same reason: `get_termination`
+is what maps a negative value to that policy, and the `not dockerized` branch returns before
+calling it.
+
+**What this means for squall.** On the two backends squall ships against there is **no warm
+pool**. Spec §7 treats `hold` as viable only inside the warm window; on Vast that window is
+zero-width, so `holdTimeout` must cover a full cold provision — instance, image pull and
+weights — or the proxy always falls through. Cost-wise the direction is safe (a container
+backend cannot leave an idle billing instance), which is why this is an expectations finding
+rather than a money bug. The chart still requires `idleDuration` because it cannot know which
+backend a given fleet will draw from, and the value does bind on VM backends.
+
+**Standard: source-verified, not measured.** One notch below F21's own `measured` rows. A
+live Vast run timing job-stop to instance release would close it.
