@@ -150,7 +150,7 @@ func (r *ModelReconciler) now() time.Time {
 // error is exactly controller-runtime's requeue-with-backoff path, so the
 // next attempt re-observes dstack from scratch rather than compounding a
 // stale decision.
-func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) { //nolint:gocyclo // reconciliation deliberately sequences independent safety gates
 	logger := log.FromContext(ctx)
 
 	var model squallv1alpha1.Model

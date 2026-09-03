@@ -58,6 +58,14 @@ const (
 
 var errRequestCeiling = errors.New("squall-proxy: request ceiling reached")
 
+func applyRequestCeiling(r *http.Request, d time.Duration) (*http.Request, context.CancelFunc) {
+	if d <= 0 {
+		return r, func() {}
+	}
+	ctx, cancel := context.WithTimeoutCause(r.Context(), d, errRequestCeiling)
+	return r.WithContext(ctx), cancel
+}
+
 // requestRecord accumulates what one request did, so ServeHTTP's single
 // deferred log line can describe the whole lifecycle from any of its several
 // return paths (D87). An empty outcome means a path returned without
@@ -255,11 +263,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// from the sleep decision — aggregateActivity's soundness argument
 	// ("Begin before any upstream call") is untouched.
 	if hasCR {
-		if h.MaxRequestDuration > 0 {
-			ctx, cancel := context.WithTimeoutCause(r.Context(), h.MaxRequestDuration, errRequestCeiling)
-			defer cancel()
-			r = r.WithContext(ctx)
-		}
+		var cancel context.CancelFunc
+		r, cancel = applyRequestCeiling(r, h.MaxRequestDuration)
+		defer cancel()
 		done := h.Activity.Begin(model)
 		defer done()
 		if h.Metrics != nil {
