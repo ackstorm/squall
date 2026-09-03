@@ -11,20 +11,70 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.1.5] — 2026-09-03
+
+The idle-capacity release. Every change here exists to answer one question:
+can a GPU squall started keep running with nobody using it? Read the two
+**Changed** entries before upgrading — one of them fails the chart render
+until you edit your values, deliberately.
+
 ### Fixed
 
-- **Money:** `spec.fleet.idleDuration` now reaches dstack on runs and fleets.
-- **Money:** stuck proxy requests have a 45m end-to-end ceiling.
-- `uncontrolledTimeout` no longer permits an unbounded deadline.
-- The sleep flip re-sends the value stored by the running dstack run, so
-  pre-upgrade runs remain sleepable instead of billing indefinitely (D156).
+- **Money, the big one:** `spec.fleet.idleDuration` now actually reaches
+  dstack, on the run configuration for every apply and on every fleet squall
+  creates. Until now the field was required by the CRD and then dropped
+  before the wire, so once a Model went `Asleep` the rented instance lived
+  for whatever the fleet said — which for the chart's own fleets was dstack's
+  default of **three days**. Flipping replicas to zero stops the job; only
+  `idle_duration` stops the machine (F21).
+- **Money:** the sleep flip now re-sends the durations the running dstack run
+  was created with rather than the Model's current ones. dstack refuses an
+  apply against an active run whose spec differs in anything but the replica
+  count, and squall recovers from that refusal only on the wake path, so
+  without this any run created before the fix above would have been refused
+  on its way to sleep and stayed awake indefinitely.
 
 ### Added
 
-- Idle-capacity gauges and alerts for idle-but-awake Models and an absent controller.
-- Controller replicas now default to 2.
-- `spec.hardStop` adds an on-demand dead-man's switch via dstack `max_duration`;
-  firing is reported as an incident and alerts critically.
+- **`spec.hardStop`** (default `24h`), a dead-man's switch for on-demand
+  Models. It is sent to dstack as the run's `max_duration` and enforced by
+  the runner inside the container, so it is the only bound that still holds
+  when squall-controller is dead — every other path to zero replicas runs
+  inside that one process. Verified against dstack 0.21.2 to terminate the
+  job without submitting a replacement. Pinned Models (`minReplicas: 1`) are
+  unaffected: there a hard stop would be a scheduled outage, and `maxLifetime`
+  remains the alert-only instrument for them. Must be at least `1h` and never
+  shorter than the uncontrolled deadline; `0` disables it and warns.
+  **A `hardStop` that fires is an incident** — it means nothing else acted for
+  the whole window — and it alerts as `SquallModelHardStopFired`.
+- **A ceiling on every proxied request** (`proxy.env.maxRequestDuration`,
+  default `45m`). **This can terminate a generation**, which is why it is
+  generous by default: set it above your longest `holdTimeout` plus a real
+  generation. It exists because in-flight requests are what block
+  scale-to-zero, so a request that never finished — a client that stops
+  reading, an engine that hangs — kept a GPU awake with no other guardian
+  able to see it.
+- `squall_model_idle_seconds` and `squall_model_scale_down_delay_seconds`,
+  plus three alerts: `SquallModelIdleButAwake` (live capacity idle past three
+  times its own window, so the sleep guardian is not firing),
+  `SquallControllerAbsent` (nothing has scraped the controller for 10m, which
+  also means every other squall alert is silently evaluating to nothing) and
+  `SquallModelHardStopFired`. All behind `prometheusRule.enabled`.
+
+### Changed
+
+- **`dstack.fleets[].idleDuration` is now REQUIRED and the chart render fails
+  without it.** This is deliberate rather than defaulted: dstack's own default
+  is three days, so a silently-omitted value is the most expensive mistake
+  available here. Add it to every entry in `dstack.fleets` before upgrading.
+- **`spec.uncontrolledTimeout: 0` no longer disables the deadline.** It is
+  rejected on the wake path and read as "use the default" for a Model already
+  awake, and explicit values are capped at `24h`. There is no longer any way
+  to configure unbounded capacity that squall cannot observe.
+- `controller.replicas` now defaults to `2`. Leader election was already on,
+  so the standby actuates nothing until it holds the lease.
 
 ## [0.1.4] — 2026-09-02
 
@@ -174,7 +224,8 @@ order to run this safely are listed.
   so a Model verified before upgrading keeps it empty until its run generation
   is replaced. Empty means "do not rewrite", which is the safe direction.
 
-[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/ackstorm/squall/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/ackstorm/squall/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/ackstorm/squall/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/ackstorm/squall/compare/v0.1.1...v0.1.2
