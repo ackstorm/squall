@@ -49,7 +49,7 @@ func TestRules_ObservedExceedsDeclaredShape(t *testing.T) {
 	}
 
 	rules := rule.Spec.Groups[0].Rules
-	if len(rules) != 5 {
+	if len(rules) != 7 {
 		t.Fatalf("rules = %d, want exactly 5 (age, price, provisioning loop, uncontrolled, idle capacity)", len(rules))
 	}
 
@@ -75,6 +75,8 @@ func TestRules_ObservedExceedsDeclaredShape(t *testing.T) {
 		"squall_model_uncontrolled_seconds > 0.5 * squall_model_uncontrolled_timeout_seconds": false,
 		// capacity is up while the Model is not Ready — paying for nothing
 		"squall_model_run_active > max by (namespace, name) (squall_model_phase{phase=\"Ready\"})": false,
+		"squall_model_idle_seconds > 3 * squall_model_scale_down_delay_seconds": false,
+		"absent(controller_runtime_active_workers{controller=\"squall-model\"}) > 0": false,
 	}
 	for _, r := range rules {
 		if _, ok := wantExprs[r.Expr]; ok {

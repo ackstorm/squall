@@ -64,3 +64,19 @@
               briefly during a wake or a drain; sustained past 15m it means a
               stuck wake, a failed teardown, or an orphan the reaper has not
               swept.
+        - alert: SquallModelIdleButAwake
+          expr: squall_model_idle_seconds > 3 * squall_model_scale_down_delay_seconds
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Model {{ $labels.name }} has live capacity and no requests for 3x its idle window
+            description: The idle-sleep guardian should have flipped this Model to zero; it has not.
+        - alert: SquallControllerAbsent
+          expr: absent(controller_runtime_active_workers{controller="squall-model"}) > 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: squall-controller is not reporting
+            description: No scrape has seen the Model controller for 10m; every 1-to-0 guardian is silent.
