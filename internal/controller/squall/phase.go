@@ -279,10 +279,15 @@ func Decide(
 
 const DefaultUncontrolledGrace = 15 * time.Minute
 const MaxUncontrolledTimeout = 2 * time.Hour
+const MaxExplicitUncontrolledTimeout = 24 * time.Hour
 
 func uncontrolledTimeoutFor(spec squallv1alpha1.ModelSpec) time.Duration {
-	if spec.UncontrolledTimeout != nil {
-		return spec.UncontrolledTimeout.Duration
+	if spec.UncontrolledTimeout != nil && spec.UncontrolledTimeout.Duration > 0 {
+		d := spec.UncontrolledTimeout.Duration
+		if d > MaxExplicitUncontrolledTimeout {
+			d = MaxExplicitUncontrolledTimeout
+		}
+		return d
 	}
 	d := 4*time.Duration(spec.ScaleDownDelaySeconds)*time.Second + DefaultUncontrolledGrace
 	if d > MaxUncontrolledTimeout {

@@ -11,7 +11,16 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **Money:** `spec.fleet.idleDuration` now reaches dstack on runs and fleets.
+- **Money:** stuck proxy requests have a 45m end-to-end ceiling.
+- `uncontrolledTimeout` no longer permits an unbounded deadline.
+
+### Added
+
+- Idle-capacity gauges and alerts for idle-but-awake Models and an absent controller.
+- Controller replicas now default to 2.
 
 ## [0.1.4] — 2026-09-02
 

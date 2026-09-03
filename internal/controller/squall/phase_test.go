@@ -70,16 +70,16 @@ func TestUncontrolledTimeoutFor_Default(t *testing.T) {
 	}
 }
 
-func TestUncontrolledTimeoutFor_ExplicitZeroIsOptOut(t *testing.T) {
+func TestUncontrolledTimeoutFor_ExplicitZeroFallsBackToDefault(t *testing.T) {
 	zero := metav1.Duration{}
-	if got := uncontrolledTimeoutFor(squallv1alpha1.ModelSpec{ScaleDownDelaySeconds: 120, UncontrolledTimeout: &zero}); got != 0 {
+	if got := uncontrolledTimeoutFor(squallv1alpha1.ModelSpec{ScaleDownDelaySeconds: 120, UncontrolledTimeout: &zero}); got != 23*time.Minute {
 		t.Fatalf("got %v", got)
 	}
 }
 
-func TestUncontrolledTimeoutFor_ExplicitValueIsNotCapped(t *testing.T) {
-	eight := metav1.Duration{Duration: 8 * time.Hour}
-	if got := uncontrolledTimeoutFor(squallv1alpha1.ModelSpec{UncontrolledTimeout: &eight}); got != 8*time.Hour {
+func TestUncontrolledTimeoutFor_ExplicitValueIsCappedAt24h(t *testing.T) {
+	week := metav1.Duration{Duration: 7 * 24 * time.Hour}
+	if got := uncontrolledTimeoutFor(squallv1alpha1.ModelSpec{UncontrolledTimeout: &week}); got != MaxExplicitUncontrolledTimeout {
 		t.Fatalf("got %v", got)
 	}
 }

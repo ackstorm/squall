@@ -386,7 +386,7 @@ type ModelSpec struct {
 
 	// UncontrolledTimeout bounds how long capacity may stay up while idle
 	// evidence is unavailable. Nil defaults to min(4x the idle window + 15m,
-	// 2h); an explicit value is not capped, and zero opts out.
+	// 2h); an explicit value must be in (0, 24h], and zero is rejected.
 	// +optional
 	UncontrolledTimeout *metav1.Duration `json:"uncontrolledTimeout,omitempty"`
 

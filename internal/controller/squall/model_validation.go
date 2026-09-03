@@ -34,6 +34,14 @@ func ValidateWithWarnings(spec squallv1alpha1.ModelSpec) ([]string, error) {
 	if spec.Fleet.IdleDuration.Duration <= 0 {
 		return nil, fmt.Errorf("fleet.idleDuration is required and must be > 0: dstack's own default is 3 days (F21), so leaving it unset is not a safe fallback")
 	}
+	if u := spec.UncontrolledTimeout; u != nil {
+		if u.Duration <= 0 {
+			return nil, fmt.Errorf("uncontrolledTimeout must be > 0 (omit it for the default)")
+		}
+		if u.Duration > MaxExplicitUncontrolledTimeout {
+			return nil, fmt.Errorf("uncontrolledTimeout (%s) exceeds the %s maximum", u.Duration, MaxExplicitUncontrolledTimeout)
+		}
+	}
 
 	if spec.HoldTimeout.Duration > spec.ProvisioningTimeout.Duration {
 		return nil, fmt.Errorf("holdTimeout (%s) must not exceed provisioningTimeout (%s): a hold that can outlive the destructive provisioning deadline can never be satisfied by a successful wake",

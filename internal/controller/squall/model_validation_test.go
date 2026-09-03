@@ -49,6 +49,25 @@ func exampleModelSpec() squallv1alpha1.ModelSpec {
 	}
 }
 
+func TestValidate_UncontrolledTimeoutBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		d       time.Duration
+		wantErr bool
+	}{
+		{"zero", 0, true}, {"negative", -time.Minute, true}, {"maximum", 24 * time.Hour, false}, {"above", 25 * time.Hour, true}, {"ordinary", 90 * time.Minute, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := exampleModelSpec()
+			spec.UncontrolledTimeout = &metav1.Duration{Duration: tc.d}
+			_, err := ValidateWithWarnings(spec)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err=%v wantErr=%v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestValidate_HoldTimeoutExceedsProvisioningTimeout covers spec §5.1's
 // deadline ordering: "Deadlines are ordered: holdTimeout ≤
 // provisioningTimeout". A hold that outlives the destructive provisioning
