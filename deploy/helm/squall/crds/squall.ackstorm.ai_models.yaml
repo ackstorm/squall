@@ -167,6 +167,19 @@ spec:
                 description: |-
                   HardStop is an on-demand-only dead-man's switch sent as dstack
                   max_duration and enforced by the runner. Zero disables it with warning.
+
+                  DO NOT RELY ON THIS YET (D161). It is wired correctly — the value
+                  reaches job_spec.max_duration and the runner's submit body — but a
+                  live test on the Kubernetes backend saw a replica run 104 minutes
+                  against max_duration: 3600 without being terminated, with the
+                  runner's own API still reporting state "running" and an empty
+                  termination_reason. Treat it as unproven, not as the bound that
+                  survives a dead controller, until it has been observed to fire.
+
+                  It also bounds ONE CONTINUOUS job submission, not the Model's
+                  cumulative awake time: every sleep/wake cycle mints a new submission
+                  with a fresh clock, so a Model that flips regularly never approaches
+                  it. That is right for the runaway it targets and wrong as a spend cap.
                 type: string
               health:
                 default: {}

@@ -11,6 +11,22 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Corrected a claim made for `spec.hardStop` in 0.1.5.** The release notes
+  called it "the only bound that still holds when squall-controller is dead".
+  A live end-to-end test has since seen a replica run **104 minutes against
+  `max_duration: 3600`** without being terminated, with dstack's own runner
+  API still reporting `state: running` and an empty `termination_reason` —
+  on the Kubernetes backend, with the value confirmed present in the job spec
+  and in the runner's submit body. **Do not rely on `hardStop` as a
+  dead-man's switch until it has been observed to fire.** It stays wired and
+  defaulted; only the claim changes. Ledger D161.
+- Documented that `hardStop` bounds **one continuous job submission**, not a
+  Model's cumulative awake time. Each sleep/wake cycle mints a new dstack job
+  submission with a fresh clock, so a Model that flips regularly never
+  approaches it. Correct for the runaway it targets, wrong as a spend cap.
+
 ### Documentation
 
 - Corrected what `fleet.idleDuration` actually does per backend. dstack gates
