@@ -159,6 +159,10 @@ proxy:
     demandRefreshInterval: ""
     # int. Empty (0) means unbounded.
     maxPendingPerModel: ""
+    # End-to-end ceiling on one request (hold + forward + stream). Empty uses
+    # the proxy's 45m default; 0 disables it and should never be used where a
+    # bill can grow (D153).
+    maxRequestDuration: ""
     # slog level: debug | info | warn | error. D87 records one line per
     # request; an ordinary forward is Debug so a busy proxy stays readable,
     # while a HELD or failed request logs at Info and is visible here by

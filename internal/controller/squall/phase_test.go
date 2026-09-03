@@ -93,6 +93,47 @@ func TestUncontrolledDue(t *testing.T) {
 	}
 }
 
+func TestDecide_BoundMatrix(t *testing.T) {
+	now := time.Now()
+	run := &dstack.Run{Name: "m", RunID: "r1", Replicas: 1}
+	ago := func(d time.Duration) *metav1.Time { v := metav1.NewTime(now.Add(-d)); return &v }
+	spec := squallv1alpha1.ModelSpec{MinReplicas: 0, ScaleDownDelaySeconds: 120, ProvisioningTimeout: metav1.Duration{Duration: 20 * time.Minute}, Health: squallv1alpha1.ModelHealth{UnhealthyAfter: metav1.Duration{Duration: 10 * time.Minute}, FailureThreshold: 3}}
+	idle := &ActivityEvidence{Complete: true, AllIdle: true, AnyData: true, NewestLastRequestAt: now.Add(-10 * time.Minute)}
+	busy := &ActivityEvidence{Complete: true, AllIdle: false, AnyData: true, NewestLastRequestAt: now.Add(-10 * time.Minute)}
+	incomplete := &ActivityEvidence{}
+	failing := &ActivityEvidence{Complete: true, AllIdle: true, AnyData: true, NewestLastRequestAt: now.Add(-30 * time.Second), NewestLastSuccessAt: now.Add(-30 * time.Minute), FailuresSinceSuccess: 5}
+	zero := metav1.Duration{}
+	pinned := spec
+	pinned.MinReplicas = 1
+	cases := []struct {
+		name     string
+		spec     squallv1alpha1.ModelSpec
+		obs      Observed
+		prior    squallv1alpha1.ModelStatus
+		demand   bool
+		phase    squallv1alpha1.ModelPhase
+		apply    bool
+		replicas int
+	}{
+		{"idle", spec, Observed{Run: run, Ready: true, Activity: idle}, squallv1alpha1.ModelStatus{WakeStartedAt: ago(time.Hour)}, false, squallv1alpha1.ModelPhaseAsleep, true, 0},
+		{"busy", spec, Observed{Run: run, Ready: true, Activity: busy}, squallv1alpha1.ModelStatus{WakeStartedAt: ago(time.Hour)}, false, squallv1alpha1.ModelPhaseReady, false, 1},
+		{"uncontrolled", spec, Observed{Run: run, Ready: true, Activity: incomplete}, squallv1alpha1.ModelStatus{WakeStartedAt: ago(2 * time.Hour), UncontrolledSince: ago(30 * time.Minute)}, false, squallv1alpha1.ModelPhaseAsleep, true, 0},
+		{"uncontrolled demand stays", spec, Observed{Run: run, Ready: true, Activity: incomplete}, squallv1alpha1.ModelStatus{WakeStartedAt: ago(2 * time.Hour), UncontrolledSince: ago(30 * time.Minute)}, true, squallv1alpha1.ModelPhaseReady, false, 1},
+		{"unhealthy traffic sleeps", spec, Observed{Run: run, Ready: true, Activity: failing}, squallv1alpha1.ModelStatus{WakeStartedAt: ago(time.Hour)}, true, squallv1alpha1.ModelPhaseAsleep, true, 0},
+		{"uncontrolled zero uses default", func() squallv1alpha1.ModelSpec { s := spec; s.UncontrolledTimeout = &zero; return s }(), Observed{Run: run, Ready: true, Activity: incomplete}, squallv1alpha1.ModelStatus{WakeStartedAt: ago(2 * time.Hour), UncontrolledSince: ago(30 * time.Minute)}, false, squallv1alpha1.ModelPhaseAsleep, true, 0},
+		{"provisioning timeout", spec, Observed{Run: run, Ready: false, Activity: incomplete}, squallv1alpha1.ModelStatus{WakeStartedAt: ago(25 * time.Minute)}, true, squallv1alpha1.ModelPhaseDead, true, 0},
+		{"pinned never sleeps", pinned, Observed{Run: run, Ready: true, Activity: idle}, squallv1alpha1.ModelStatus{WakeStartedAt: ago(48 * time.Hour)}, false, squallv1alpha1.ModelPhaseReady, false, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			phase, action := Decide(tc.obs, tc.prior, tc.spec, tc.demand, now)
+			if phase != tc.phase || action.Apply != tc.apply || (action.Apply && action.Replicas != tc.replicas) {
+				t.Fatalf("phase=%s apply=%v replicas=%d", phase, action.Apply, action.Replicas)
+			}
+		})
+	}
+}
+
 func TestUncontrolledDue_FreshDemandResetsClock(t *testing.T) {
 	now := time.Now()
 	old := metav1.NewTime(now.Add(-30 * time.Minute))

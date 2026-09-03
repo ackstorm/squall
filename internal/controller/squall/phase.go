@@ -279,6 +279,9 @@ func Decide(
 
 const DefaultUncontrolledGrace = 15 * time.Minute
 const MaxUncontrolledTimeout = 2 * time.Hour
+
+// MaxExplicitUncontrolledTimeout prevents an operator value from becoming
+// an unbounded bill; runtime clamps edits to already-awake Models too.
 const MaxExplicitUncontrolledTimeout = 24 * time.Hour
 
 func uncontrolledTimeoutFor(spec squallv1alpha1.ModelSpec) time.Duration {

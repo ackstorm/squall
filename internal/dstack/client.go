@@ -116,7 +116,9 @@ type ApplyRequest struct {
 	// allowlist and the CRD makes it mandatory (MinItems=1) — an empty
 	// Backends here means the eligibility table is not being enforced,
 	// which is the exact failure its own CRD comment warns about.
-	Placement    Placement
+	Placement Placement
+	// IdleDuration is the Model's fleet idle window, sent to dstack in whole
+	// seconds. Zero omits it; callers should use the required CRD value.
 	IdleDuration time.Duration
 
 	// Current is the CAS anchor (F18). dstack's apply compares the ENTIRE
@@ -183,8 +185,10 @@ type FleetSpec struct {
 	// Name should be built with FleetName so two callers asking for the
 	// same Backends land on the identical fleet instead of each minting
 	// their own.
-	Name         string
-	Backends     []string
+	Name     string
+	Backends []string
+	// IdleDuration governs release of a warm instance on fleet reuse. Auto
+	// fleets are shared per backend and create-only; the first Model wins.
 	IdleDuration time.Duration
 }
 

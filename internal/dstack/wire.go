@@ -98,6 +98,7 @@ type configurationWire struct {
 	IdleDuration string            `json:"idle_duration,omitempty"`
 }
 
+// dstackDuration renders dstack's whole-second duration wire format.
 func dstackDuration(d time.Duration) string {
 	if d <= 0 {
 		return ""

@@ -56,6 +56,7 @@ const (
 	outcomeCeiling    = "request-ceiling"
 )
 
+// errRequestCeiling distinguishes squall's own bound from a client disconnect.
 var errRequestCeiling = errors.New("squall-proxy: request ceiling reached")
 
 func applyRequestCeiling(r *http.Request, d time.Duration) (*http.Request, context.CancelFunc) {
@@ -158,6 +159,7 @@ type Handler struct {
 	// unbounded. Beyond it, the wait contract is answered immediately
 	// instead of blocking (task 9's N+1-concurrent-holds test).
 	MaxPendingPerModel int
+	// MaxRequestDuration bounds hold, forward, and stream for one request.
 	MaxRequestDuration time.Duration
 
 	pendingMu sync.Mutex

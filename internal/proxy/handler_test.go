@@ -48,6 +48,55 @@ func TestHandler_RequestCeilingReleasesInFlight(t *testing.T) {
 	}
 }
 
+func TestHandler_RequestCeilingCutsStreamingUpstream(t *testing.T) {
+	released := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			_, _ = w.Write([]byte("data: first\n\n"))
+			f.Flush()
+		}
+		<-released
+	}))
+	defer func() { close(released); upstream.Close() }()
+	target, _ := url.Parse(upstream.URL)
+	c := NewCache()
+	c.Set("m", ModelSnapshot{Phase: squallv1alpha1.ModelPhaseReady, Schedulable: true})
+	h := newHandler(t, c, target)
+	h.MaxRequestDuration = 50 * time.Millisecond
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { h.ServeHTTP(rec, chatRequest("m")); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("streaming request ceiling did not return")
+	}
+	got := h.Activity.Report().Models["m"]
+	if got.InFlight != 0 {
+		t.Fatalf("inFlight=%d", got.InFlight)
+	}
+	if got.FailuresSinceSuccess != 0 {
+		t.Fatalf("failures=%d", got.FailuresSinceSuccess)
+	}
+}
+
+func TestHandler_RequestCeilingZeroDisables(t *testing.T) {
+	c := NewCache()
+	c.Set("m", ModelSnapshot{Phase: squallv1alpha1.ModelPhaseWaking, Schedulable: true, HoldTimeout: 80 * time.Millisecond})
+	h := newHandler(t, c, nil)
+	h.MaxRequestDuration = 0
+	start := time.Now()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, chatRequest("m"))
+	if time.Since(start) < 60*time.Millisecond {
+		t.Fatal("disabled ceiling cut the hold early")
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d", rec.Code)
+	}
+}
+
 type noopPatcher struct{}
 
 func (noopPatcher) PatchDemand(context.Context, string, time.Time) error { return nil }
