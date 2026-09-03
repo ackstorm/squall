@@ -50,7 +50,8 @@ func TestRules_ObservedExceedsDeclaredShape(t *testing.T) {
 
 	rules := rule.Spec.Groups[0].Rules
 	if len(rules) != 8 {
-		t.Fatalf("rules = %d, want exactly 5 (age, price, provisioning loop, uncontrolled, idle capacity)", len(rules))
+		t.Fatalf("rules = %d, want exactly 8 (age, price, provisioning loop, uncontrolled, "+
+			"capacity-while-not-ready, idle-but-awake, controller absent, hard stop)", len(rules))
 	}
 
 	for _, r := range rules {
