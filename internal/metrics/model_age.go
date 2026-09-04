@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 // Package metrics implements spec Section 10's declared/observed gauge
 // pairs (AC19): squall_model_age_seconds vs squall_model_max_lifetime_seconds,

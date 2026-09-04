@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 // Package clock abstracts wall-clock time so anything timing-dependent can
 // be driven deterministically in tests instead of sleeping for real:

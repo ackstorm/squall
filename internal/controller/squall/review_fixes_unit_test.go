@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 // Regression tests for the 2026-08-31 whole-branch review's controller-side
 // findings (ledger D104, D110, D112, D115). Pure unit tests: fake client,

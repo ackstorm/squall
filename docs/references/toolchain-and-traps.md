@@ -84,7 +84,7 @@ the relevant file before writing ours; their comments explain past breakages.
 House conventions, both projects:
 
 - Unit + envtest use plain `testing` with `TestMain`. **Ginkgo is used only for e2e.**
-- Every `.go` file starts with `// SPDX-License-Identifier: Apache-2.0`.
+- Every `.go` file starts with `// SPDX-License-Identifier: MIT`.
 - In-memory stateful mocks as a Go package (`internal/<domain>/mock`).
 
 ## The e2e cluster will happily test code that is not in your tree

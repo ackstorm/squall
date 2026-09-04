@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 #
 # Single-node kind cluster for Phase 11 e2e (Task 11.1). Node image is pinned
 # to the same Kubernetes version as ENVTEST_K8S_VERSION (Makefile) so the

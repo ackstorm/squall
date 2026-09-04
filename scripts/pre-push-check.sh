@@ -283,13 +283,13 @@ fi
 
 # --- 12. license-header SPDX gate ---
 hdr "12. license-header SPDX gate"
-# Every in-scope *.go file MUST carry `// SPDX-License-Identifier: Apache-2.0`
+# Every in-scope *.go file MUST carry `// SPDX-License-Identifier: MIT`
 # on its first non-blank, non-build-tag line. Exempt: zz_generated*, mock_*.
 MISSING_SPDX=""
 while IFS= read -r f; do
   [[ "$(basename "$f")" == zz_generated* ]] && continue
   [[ "$(basename "$f")" == mock_* ]] && continue
-  if ! head -5 "$f" 2>/dev/null | grep -qx "// SPDX-License-Identifier: Apache-2.0"; then
+  if ! head -5 "$f" 2>/dev/null | grep -qx "// SPDX-License-Identifier: MIT"; then
     MISSING_SPDX+="  $f"$'\n'
   fi
 done < <(git ls-files '*.go')

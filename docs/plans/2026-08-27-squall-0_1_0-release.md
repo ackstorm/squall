@@ -110,7 +110,7 @@ reviews, and a task whose only deliverable is a regenerated YAML file.
 `api/squall/v1alpha1/price_test.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package v1alpha1
 
@@ -196,7 +196,7 @@ Expected: FAIL, `undefined: Price`.
 `api/squall/v1alpha1/price.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package v1alpha1
 
@@ -391,7 +391,7 @@ In `ModelStatus` (`api/squall/v1alpha1/model_types.go:431`), after `DeploymentNu
 `api/squall/v1alpha1/conditions.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package v1alpha1
 
@@ -745,7 +745,7 @@ git commit -m "feat(controller): spec.model in every engine's dialect, Ollama in
 `internal/controller/squall/served_test.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package squall
 
@@ -835,7 +835,7 @@ Expected: FAIL, `undefined: HTTPServedModelReader`.
 `internal/controller/squall/served.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package squall
 
@@ -1018,7 +1018,7 @@ git commit -m "feat(controller): verify the replica serves the model the CR aske
 `internal/controller/squall/preflight_test.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package squall
 
@@ -1200,7 +1200,7 @@ existing tests keep passing) and to any other `Client` implementation the build 
 `internal/controller/squall/preflight.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package squall
 

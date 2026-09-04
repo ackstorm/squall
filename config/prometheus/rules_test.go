@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 // promtool is not available in this environment (no network-installed
 // binary), so this test is the substitute check for rules.yaml: it parses

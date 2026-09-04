@@ -29,7 +29,7 @@ Read once before Task 1. Every task below relies on these.
 | dstack client | `internal/dstack` | |
 | Unit + envtest | plain `testing` + `TestMain` | House style — see `internal/controller/suite_test.go` |
 | E2E only | Ginkgo v2 | House style — see `test/e2e/suite_test.go` |
-| Every `.go` file starts with | `// SPDX-License-Identifier: Apache-2.0` | Enforced by the sister's `pre-push` gate; port it |
+| Every `.go` file starts with | `// SPDX-License-Identifier: MIT` | Enforced by the sister's `pre-push` gate; port it |
 
 **The host has Go 1.24.4; this project needs 1.26.4.** Every `go`, `kubebuilder`, `controller-gen` and `make` invocation that touches the toolchain runs inside the devtools container via `./scripts/dev.sh`. Phase 1 builds that container. Until it exists, nothing else in this plan can run.
 
@@ -247,7 +247,7 @@ git commit -m "build: add Makefile with devtools routing and test phases"
 
 `hack/boilerplate.go.txt` is one line:
 ```
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 ```
 
 **Step 2:** Fix the stale comment in `.gitignore` — it labels the cache dir `(hack/dev.sh)`; the wrapper lives at `scripts/dev.sh`.
@@ -421,7 +421,7 @@ git mv cmd/main.go cmd/controller/main.go
 `cmd/proxy/main.go` — deliberately minimal; Phase 9 fills it in:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 // Command squall-proxy is the Squall data path (spec §7): per request it
 // forwards when the Model is Ready, blocks while it wakes, and answers the
@@ -499,7 +499,7 @@ git commit -m "feat: split controller and proxy into separate binaries"
 Transcribe §5.1 exactly. `resources.gpu` is dstack's own `GPUSpec` **passed through** (F33) — do not invent a schema, and do not translate. `Memory` is a string range because that is dstack's native form (`"24GB..32GB"`).
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package v1alpha1
 
@@ -673,7 +673,7 @@ git commit -m "feat: define Model CRD types per spec v0.15 section 5.1"
 These encode §5.1's four validation rules. Every one must FAIL before Task 3.3 exists.
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package squall
 
@@ -814,7 +814,7 @@ git commit -m "test: add envtest bootstrap and Model sample apply test"
 **Step 1:** Write the package doc as the contract. This is the reference an implementer reads instead of re-reading dstack's source:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 // Package mock is an in-memory fake of the dstack server API, reproducing
 // the five source-verified behaviours Squall's design rests on. It exists

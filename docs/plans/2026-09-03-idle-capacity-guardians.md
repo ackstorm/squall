@@ -499,7 +499,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 `internal/metrics/idle_test.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package metrics
 
@@ -557,7 +557,7 @@ Expected: compile error `undefined: NewIdleCollector`.
 `internal/metrics/idle.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package metrics
 

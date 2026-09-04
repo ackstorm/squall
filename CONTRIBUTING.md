@@ -36,7 +36,7 @@ shell into the workflow YAML.
 
 ## House rules
 
-- **Every `.go` file starts with** `// SPDX-License-Identifier: Apache-2.0`.
+- **Every `.go` file starts with** `// SPDX-License-Identifier: MIT`.
 - **Conventional commits**, imperative subject under 72 characters.
 - **No naked polling loops.** `until <cmd>; do sleep N; done` hangs forever the moment the
   thing it polls disappears. Every wait needs an upper bound *and* an explicit failure

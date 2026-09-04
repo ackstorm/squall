@@ -12,7 +12,7 @@
 
 - **Every `go`/`make` command runs through `./scripts/dev.sh`.** The host Go is the wrong version. Never bare `go`/`make`. Never `DOCKER_BUILDKIT=0`.
 - **The lint target is `qa-lint`**, not `lint`.
-- Every `.go` file starts with `// SPDX-License-Identifier: Apache-2.0` as its first line.
+- Every `.go` file starts with `// SPDX-License-Identifier: MIT` as its first line.
 - Unit + envtest use plain `testing` with table-driven cases. **Ginkgo is e2e-only.**
 - `make test-unit` must **never** need a control plane. Pure tests run with no skip; envtest cases skip under `-short` via `suite_test.go`'s `TestMain`.
 - **No naked polling loops.** Every wait needs an upper bound **and** an explicit failure path. Test goroutines tear down via `t.Cleanup` — no leaks, no writes to `t` after the test returns.
@@ -186,7 +186,7 @@ git commit -m "feat(proxy): record lastSuccessAt as first-party readiness eviden
 Create `internal/proxy/attempt_test.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package proxy
 
@@ -308,7 +308,7 @@ Expected: FAIL — `classifyAttempt`, `attemptRetry`, `attemptCommit`, `streamCo
 Create `internal/proxy/attempt.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package proxy
 

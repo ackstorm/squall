@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 // Command model-mock is a minimal OpenAI-compatible chat-completions
 // engine, standing in for vLLM/Ollama behind a Ready Model. It exists so

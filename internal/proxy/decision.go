@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 // Package proxy is squall-proxy's data-path logic (spec §7): the six-row
 // decision table, the blocking hold, coalesced+refreshed demand patches,

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 // Package mock is an in-memory fake of the dstack server API, reproducing
 // the five source-verified behaviours Squall's design rests on. It exists

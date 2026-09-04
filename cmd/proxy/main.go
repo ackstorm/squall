@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 // Command squall-proxy is the Squall data path (spec §7): per request it
 // forwards when the Model is Ready, blocks while it wakes, and answers the

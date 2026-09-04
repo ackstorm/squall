@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 // Wire types for dstack's real API, measured against 0.21.2. Keep this file
 // a mirror of upstream and nothing else: no behaviour, no defaults beyond

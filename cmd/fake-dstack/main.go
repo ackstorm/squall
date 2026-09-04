@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 // Command fake-dstack ships internal/dstack/mock (Phase 4) as a standalone
 // HTTP server, so Phase 11's kind e2e cluster can exercise the real

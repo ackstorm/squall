@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 // Package dstack is a narrow client over the dstack server's run-management
 // API — Apply, Get, Delete, ListRuns.

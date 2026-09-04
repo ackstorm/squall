@@ -76,7 +76,7 @@ every later task's failure mode is unreadable without it.
 Create `internal/dstack/errors_test.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package dstack
 
@@ -182,7 +182,7 @@ Expected: FAIL — `undefined: classifyError`, `undefined: ErrUnauthorized`.
 Create `internal/dstack/errors.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package dstack
 
@@ -324,7 +324,7 @@ whose `deployment_num` equals the RUN's, and whose status is not finished.
 Create `internal/dstack/probes_test.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package dstack
 
@@ -417,7 +417,7 @@ Expected: FAIL — `undefined: probesReady`, `undefined: jobWire`.
 Create `internal/dstack/probes.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package dstack
 
@@ -593,7 +593,7 @@ type Run struct {
 Create `internal/dstack/wire.go`:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 // Wire types for dstack's real API, measured against 0.21.2. Keep this file
 // a mirror of upstream and nothing else: no behaviour, no defaults beyond
@@ -877,7 +877,7 @@ Expected: FAIL to compile — `NewHTTPClient` takes a different signature.
 Create `internal/dstack/http.go` with the four operations. Every one is a `POST`; every one routes its response through `classifyError` before decoding:
 
 ```go
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
 
 package dstack
 

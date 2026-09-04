@@ -1,5 +1,5 @@
 {{/*
-SPDX-License-Identifier: Apache-2.0
+SPDX-License-Identifier: MIT
 
 squall.dstackAdminTokenValue renders the value half of a Kubernetes EnvVar.
 The chart exposes the native value/valueFrom shape so External Secrets can
