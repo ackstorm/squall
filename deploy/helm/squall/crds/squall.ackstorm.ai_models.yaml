@@ -168,13 +168,15 @@ spec:
                   HardStop is an on-demand-only dead-man's switch sent as dstack
                   max_duration and enforced by the runner. Zero disables it with warning.
 
-                  DO NOT RELY ON THIS YET (D161). It is wired correctly — the value
-                  reaches job_spec.max_duration and the runner's submit body — but a
-                  live test on the Kubernetes backend saw a replica run 104 minutes
-                  against max_duration: 3600 without being terminated, with the
-                  runner's own API still reporting state "running" and an empty
-                  termination_reason. Treat it as unproven, not as the bound that
-                  survives a dead controller, until it has been observed to fire.
+                  DOES NOT FIRE ON THE KUBERNETES BACKEND (D161). It is wired
+                  correctly — the value reaches job_spec.max_duration and the runner's
+                  submit body — but it is not enforced. A live Model ran 104 minutes
+                  against max_duration: 3600, and a minimal reproduction (a plain
+                  nginx service, no squall involved, max_duration: 2m) was still
+                  "running" at 621 seconds — 4.96x its own limit — with an empty
+                  termination_reason, ending only when a human aborted it. Do not
+                  treat this as the bound that survives a dead controller. Whether a
+                  dockerized VM backend enforces it is untested.
 
                   It also bounds ONE CONTINUOUS job submission, not the Model's
                   cumulative awake time: every sleep/wake cycle mints a new submission
@@ -244,6 +246,19 @@ spec:
                   backend (dstack's AMI on AWS/DO, the marketplace host on Vast), so an
                   image bundling its own driver stack works on one path and fails on
                   the other.
+
+                  PIN THE INDEX DIGEST, NOT THE PER-ARCHITECTURE ONE (D162). A digest
+                  may address either a multi-arch image index or a single leaf
+                  manifest, and this pattern cannot tell them apart. Pin a leaf and
+                  dstack derives that architecture as a hard requirement: an arm64
+                  leaf on Vast.ai matched zero offers, and the failure surfaced as
+                  `failed_to_start_due_to_no_capacity` naming a fleet on another
+                  backend entirely — a message that sends you tuning CPU, memory and
+                  price, none of which can fix it. The same repo's index digest
+                  matched 38 offers. Get the right one with
+                  `docker buildx imagetools inspect <repo>:<tag>` and use its
+                  top-level `Digest:`; `docker pull` on an arm64 machine gives you the
+                  leaf.
                 pattern: ^.+@sha256:[a-f0-9]{64}$
                 type: string
               maxLifetime:
