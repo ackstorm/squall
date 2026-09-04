@@ -11,6 +11,8 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+## [0.1.6] — 2026-09-04
+
 ### Fixed
 
 - **The warm-window warning no longer counts `fleet.idleDuration` on backends that
@@ -270,7 +272,8 @@ order to run this safely are listed.
   so a Model verified before upgrading keeps it empty until its run generation
   is replaced. Empty means "do not rewrite", which is the safe direction.
 
-[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/ackstorm/squall/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/ackstorm/squall/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/ackstorm/squall/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/ackstorm/squall/compare/v0.1.2...v0.1.3

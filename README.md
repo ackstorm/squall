@@ -3,7 +3,7 @@
 **Scale-to-zero LLM serving on GPUs that are not in your cluster.**
 
 ![status](https://img.shields.io/badge/status-pre--alpha-orange)
-![release](https://img.shields.io/badge/release-v0.1.5-green)
+![release](https://img.shields.io/badge/release-v0.1.6-green)
 ![go](https://img.shields.io/badge/go-1.26.6-00ADD8)
 ![license](https://img.shields.io/badge/license-Apache%202.0-blue)
 
@@ -133,7 +133,7 @@ for `fleet.idleDuration`, dstack releases it.
 The chart deploys squall **and a dstack server** — you do not need to run dstack yourself.
 
 ```bash
-helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.5 \
+helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.6 \
   --namespace squall-system --create-namespace \
   --set-string dstack.adminToken.value="$(openssl rand -hex 16)" \
   --set controller.env.dstackURL="http://dstack.squall-system.svc.cluster.local:3000"
@@ -146,7 +146,7 @@ version you first installed — while reporting success. On 0.1.5 that silently 
 
 ```bash
 kubectl apply --server-side -f \
-  https://github.com/ackstorm/squall/releases/download/v0.1.5/squall.ackstorm.ai_models.yaml
+  https://github.com/ackstorm/squall/releases/download/v0.1.6/squall.ackstorm.ai_models.yaml
 ```
 
 With no `dstack.backends`, dstack provisions onto your own cluster — no GPU, no bill, useful
