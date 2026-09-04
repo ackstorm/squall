@@ -13,6 +13,23 @@ out explicitly, because that is the class of change worth reading twice.
 
 ### Fixed
 
+- **The warm-window warning no longer counts `fleet.idleDuration` on backends that
+  cannot hold a warm pool.** dstack only honours an idle window when its `dockerized`
+  flag is true, which is false on **Vast.ai, Kubernetes and RunPod** (D158). The
+  validation warning added them anyway, so a live Vast.ai Model was told its warm
+  window was 15m when it was really 5m — and its demand anchor then expired **14
+  minutes before** the GPU it was holding open finished provisioning. One
+  non-dockerized backend in `placement.backends` is now enough to discount
+  `idleDuration` entirely; the warning names which formula it used. Ledger D158.
+- **`NoCapacity` no longer retries flat out.** A Model the backend cannot satisfy
+  minted a fresh dstack run every 15-20 seconds indefinitely — measured on Vast.ai,
+  where every attempt is one the provider may charge for. Recreates are now paced by
+  a 1-minute backoff after a failure dstack itself diagnosed as no capacity,
+  insufficient credit, or rate limiting. A wake still **fails open**: the pacing never
+  abandons the retry, and `hardStop`-fired runs are never paced. Ledger D163.
+- The `hardStop is disabled` warning no longer implies that enabling it gives you a
+  dead-man's switch — on the Kubernetes backend it does not fire at all (D161).
+
 - **Corrected a claim made for `spec.hardStop` in 0.1.5.** The release notes
   called it "the only bound that still holds when squall-controller is dead".
   A live end-to-end test has since seen a replica run **104 minutes against

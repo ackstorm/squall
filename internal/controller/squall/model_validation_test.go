@@ -187,3 +187,53 @@ func TestValidate_ExampleCR_ValidatesCleanly(t *testing.T) {
 		t.Fatalf("Validate() error = %v, want nil for the spec §5.1 example CR", err)
 	}
 }
+
+// TestValidate_WarmWindowIgnoresIdleDurationWhereItIsInert covers D158's
+// consequence for the §5.1 warm-window warning. fleet.idleDuration only
+// buys a warm instance on backends dstack marks dockerized; on Vast.ai,
+// Kubernetes and RunPod it forces the idle window to zero and never reads
+// the value, so counting it inflates the warm window on exactly the
+// backends where wakes are always cold.
+//
+// The case is chosen so the two answers DISAGREE: holdTimeout sits between
+// scaleDownDelaySeconds alone (5m) and scaleDownDelaySeconds +
+// fleet.idleDuration (15m). Measured live on 2026-09-04, this Model was
+// told it had a 15m warm window, and its demand anchor then expired 14
+// minutes before the GPU finished provisioning.
+func TestValidate_WarmWindowIgnoresIdleDurationWhereItIsInert(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		backends    []string
+		wantWarning bool
+	}{
+		{"vastai keeps no warm pool", []string{"vastai"}, true},
+		{"kubernetes keeps no warm pool", []string{"kubernetes"}, true},
+		{"runpod keeps no warm pool", []string{"runpod"}, true},
+		{"aws is dockerized, idleDuration counts", []string{"aws"}, false},
+		{"one cold backend is enough to make the wake cold", []string{"aws", "vastai"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := exampleModelSpec()
+			spec.Placement.Backends = tc.backends
+			spec.ScaleDownDelaySeconds = 300                                      // 5m
+			spec.Fleet.IdleDuration = metav1.Duration{Duration: 10 * time.Minute} // only counts when dockerized
+			spec.HoldTimeout = metav1.Duration{Duration: 12 * time.Minute}        // > 5m, < 15m
+			spec.ProvisioningTimeout = metav1.Duration{Duration: 45 * time.Minute}
+
+			warnings, err := ValidateWithWarnings(spec)
+			if err != nil {
+				t.Fatalf("ValidateWithWarnings() error = %v, want nil", err)
+			}
+			var got bool
+			for _, w := range warnings {
+				if strings.Contains(w, "warm window") {
+					got = true
+				}
+			}
+			if got != tc.wantWarning {
+				t.Errorf("warm-window warning = %v, want %v (backends %v, holdTimeout 12m, scaleDown 5m, idleDuration 10m); warnings = %v",
+					got, tc.wantWarning, tc.backends, warnings)
+			}
+		})
+	}
+}

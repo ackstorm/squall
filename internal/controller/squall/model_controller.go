@@ -343,6 +343,16 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				"model", model.Name, "priorRunId", model.Status.RunID)
 		}
 	}
+
+	if action.Throttled {
+		// D163. Deliberately V(1): there IS demand and squall IS still
+		// trying, so at default verbosity this is not news — and it repeats
+		// every reconcile, which is exactly how the original loop drowned
+		// the real cause in log noise.
+		logger.V(1).Info("provisioning failed at the backend; pacing the next recreate",
+			"model", model.Name, "priorRunId", model.Status.RunID,
+			"nextAttemptAt", action.ThrottledUntil.UTC().Format(time.RFC3339))
+	}
 	reportProvisioningCondition(&model, observed.ProvisioningFailure, newPhase)
 
 	if action.Unhealthy {
@@ -667,11 +677,23 @@ func reportProvisioningCondition(model *squallv1alpha1.Model, failure *dstack.Pr
 	case strings.Contains(text, "no_capacity"), strings.Contains(text, "no capacity"):
 		reason = squallv1alpha1.ReasonNoCapacity
 	}
+	message := fmt.Sprintf("dstack run %s: %s", failure.RunID, detail)
+	// D163: meta.SetStatusCondition refreshes LastTransitionTime only when
+	// Status FLIPS, so a Model failing the same way run after run would keep
+	// the timestamp of its FIRST failure forever. provisioningBackoff reads
+	// that field as "when this failure was recorded" and would let the
+	// window lapse permanently after one interval, restoring the very hammer
+	// it exists to stop. A different run failing is a different failure:
+	// drop the condition so the next Set writes a fresh timestamp.
+	if existing := meta.FindStatusCondition(model.Status.Conditions, squallv1alpha1.ConditionProvisioning); existing != nil &&
+		existing.Status == metav1.ConditionFalse && existing.Message != message {
+		meta.RemoveStatusCondition(&model.Status.Conditions, squallv1alpha1.ConditionProvisioning)
+	}
 	meta.SetStatusCondition(&model.Status.Conditions, metav1.Condition{
 		Type:    squallv1alpha1.ConditionProvisioning,
 		Status:  metav1.ConditionFalse,
 		Reason:  reason,
-		Message: fmt.Sprintf("dstack run %s: %s", failure.RunID, detail),
+		Message: message,
 	})
 }
 

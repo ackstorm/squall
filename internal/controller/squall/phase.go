@@ -5,6 +5,7 @@ package squall
 import (
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	squallv1alpha1 "github.com/ackstorm/squall/api/squall/v1alpha1"
@@ -143,6 +144,18 @@ type Action struct {
 	// pure function, no clock reads). Callers use it to timestamp status
 	// conditions.
 	At time.Time
+
+	// Throttled is true when a wake this pass WOULD have applied but was
+	// paced by the D163 provisioning backoff. It is a diagnosis carried out
+	// of the pure layer, never an instruction — it exists so the reconciler
+	// can say "waiting before the next attempt" instead of reusing the
+	// no-demand message, which would claim the opposite of what happened.
+	// Apply is always false when this is true.
+	Throttled bool
+
+	// ThrottledUntil is when the next attempt becomes permissible. Only
+	// meaningful when Throttled is true.
+	ThrottledUntil time.Time
 }
 
 // Decide is the phase state machine (§5.2, §6): a pure function of what
@@ -192,6 +205,16 @@ func Decide(
 		phase := squallv1alpha1.ModelPhaseWaking
 		if died {
 			phase = squallv1alpha1.ModelPhaseRecreating
+		}
+		// D163: a Model the backend cannot satisfy must not be retried flat
+		// out. Measured 2026-09-04, a Vast.ai Model whose image pinned an
+		// unsatisfiable architecture minted a fresh dstack run every 15-20s
+		// indefinitely; on a metered backend every one of those is an
+		// attempt the provider may charge for, and nothing in the loop ever
+		// widened. Wake still fails OPEN — this only paces the retry, never
+		// abandons it, and only after a failure dstack itself diagnosed.
+		if throttledUntil, throttled := provisioningBackoff(prior, now); throttled {
+			return phase, Action{Throttled: true, ThrottledUntil: throttledUntil, At: now}
 		}
 		// Either way this mints a brand-new run (F20) — there is nothing
 		// live to CAS against, so Current is left nil.
@@ -285,6 +308,56 @@ const MaxUncontrolledTimeout = 2 * time.Hour
 const MaxExplicitUncontrolledTimeout = 24 * time.Hour
 
 const MinHardStop = time.Hour
+
+// ProvisioningRetryBackoff paces recreate attempts after dstack has told us
+// the backend could not satisfy the run (D163).
+//
+// Fixed, not exponential, and deliberately so: growing the interval needs a
+// per-Model attempt counter, and the only place to keep one is a new
+// status field — a CRD change, which is a heavier change than the harm
+// justifies. One minute already turns the measured ~15-20s hammer into a
+// paced retry while still recovering within a minute of capacity appearing.
+// If this proves too blunt, THEN pay for the status field.
+const ProvisioningRetryBackoff = time.Minute
+
+// backoffReasons are the provisioning verdicts where retrying immediately
+// cannot help, because the answer came from the backend rather than from
+// anything squall controls: no capacity matched, the account cannot pay,
+// or the provider is rate-limiting us. Notably absent is ReasonHardStopFired
+// — that is a deliberate stop, and a fresh request afterwards deserves a
+// fresh run at once.
+var backoffReasons = map[string]struct{}{
+	squallv1alpha1.ReasonNoCapacity:         {},
+	squallv1alpha1.ReasonInsufficientCredit: {},
+	squallv1alpha1.ReasonBackendRateLimited: {},
+}
+
+// provisioningBackoff answers "is a recreate attempt permissible right now?"
+// from the Provisioning condition the previous pass wrote — no new state,
+// no clock read (now is the caller's).
+//
+// It leans on LastTransitionTime meaning "when this failure was recorded",
+// which holds only because reportProvisioningCondition (model_controller.go)
+// forces a fresh timestamp whenever a DIFFERENT run fails.
+// meta.SetStatusCondition alone would freeze it at the first failure, and
+// the backoff could then never advance past its first window.
+func provisioningBackoff(prior squallv1alpha1.ModelStatus, now time.Time) (time.Time, bool) {
+	cond := meta.FindStatusCondition(prior.Conditions, squallv1alpha1.ConditionProvisioning)
+	if cond == nil || cond.Status != metav1.ConditionFalse {
+		return time.Time{}, false
+	}
+	if _, ok := backoffReasons[cond.Reason]; !ok {
+		return time.Time{}, false
+	}
+	if cond.LastTransitionTime.IsZero() {
+		return time.Time{}, false
+	}
+	next := cond.LastTransitionTime.Time.Add(ProvisioningRetryBackoff)
+	if now.Before(next) {
+		return next, true
+	}
+	return time.Time{}, false
+}
 
 func uncontrolledTimeoutFor(spec squallv1alpha1.ModelSpec) time.Duration {
 	if spec.UncontrolledTimeout != nil && spec.UncontrolledTimeout.Duration > 0 {

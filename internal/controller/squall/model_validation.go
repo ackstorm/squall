@@ -4,6 +4,7 @@ package squall
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	squallv1alpha1 "github.com/ackstorm/squall/api/squall/v1alpha1"
@@ -57,15 +58,55 @@ func ValidateWithWarnings(spec squallv1alpha1.ModelSpec) ([]string, error) {
 	}
 
 	var warnings []string
-	warmWindow := time.Duration(spec.ScaleDownDelaySeconds)*time.Second + spec.Fleet.IdleDuration.Duration
+	scaleDown := time.Duration(spec.ScaleDownDelaySeconds) * time.Second
+	warmWindow, formula := scaleDown, "scaleDownDelaySeconds"
+	if backendsHoldAWarmPool(spec.Placement.Backends) {
+		warmWindow += spec.Fleet.IdleDuration.Duration
+		formula = "scaleDownDelaySeconds + fleet.idleDuration"
+	}
 	if spec.HoldTimeout.Duration > 0 && spec.HoldTimeout.Duration > warmWindow {
 		warnings = append(warnings, fmt.Sprintf(
-			"holdTimeout (%s) exceeds the warm window (%s = scaleDownDelaySeconds + fleet.idleDuration): most wakes will pay a full cold start, which is a misconfiguration in all but intent",
-			spec.HoldTimeout.Duration, warmWindow))
+			"holdTimeout (%s) exceeds the warm window (%s = %s): most wakes will pay a full cold start, which is a misconfiguration in all but intent",
+			spec.HoldTimeout.Duration, warmWindow, formula))
 	}
 	if spec.HardStop.Duration == 0 && spec.MinReplicas == 0 {
-		warnings = append(warnings, "hardStop is disabled: nothing will stop this Model's capacity if the controller dies")
+		warnings = append(warnings, "hardStop is disabled: nothing would stop this Model's capacity if the controller died — and note hardStop does not currently fire on the Kubernetes backend either (D161), so enabling it is not by itself a dead-man's switch")
 	}
 
 	return warnings, nil
+}
+
+// nonDockerizedBackends are the dstack backends whose provisioning data
+// carries dockerized: false. That flag is not a detail: dstack forces
+// termination_idle_time to 0 and never reads the profile's idle_duration
+// unless it is true (D158, and docs/references/dstack-real-api.md §9.9),
+// so on these backends a fleet keeps no warm instance and every wake is a
+// full cold provision. Source-verified against dstack a70d98b, then
+// measured on both Vast.ai and Kubernetes.
+var nonDockerizedBackends = map[string]struct{}{
+	"vastai":     {},
+	"kubernetes": {},
+	"runpod":     {},
+}
+
+// backendsHoldAWarmPool reports whether fleet.idleDuration can contribute
+// anything to the warm window for this placement.
+//
+// Deliberately pessimistic: ONE non-dockerized backend in the allowlist is
+// enough to answer false, because dstack is free to place the wake there
+// and that wake would be cold. Counting idleDuration anyway is how the
+// warning came to under-report the exact case it exists for — a live
+// Vast.ai Model was told its warm window was 15m when it was 5m, and its
+// demand anchor then expired 14 minutes before the GPU it was holding
+// open finished provisioning.
+func backendsHoldAWarmPool(backends []string) bool {
+	if len(backends) == 0 {
+		return false
+	}
+	for _, b := range backends {
+		if _, cold := nonDockerizedBackends[strings.ToLower(strings.TrimSpace(b))]; cold {
+			return false
+		}
+	}
+	return true
 }

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -780,5 +781,49 @@ func TestUpdateActivityStatus_WakeNeverRewindsTheAnchor(t *testing.T) {
 	if !model.Status.LastRequestAt.Equal(&served) {
 		t.Fatalf("anchor rewound to %v; a stale wake instant must never move it back from %v",
 			model.Status.LastRequestAt, served)
+	}
+}
+
+// TestReportProvisioningCondition_RefreshesTimestampPerFailedRun guards the
+// half of D163's fix that has no visible behaviour of its own.
+//
+// provisioningBackoff (phase.go) reads Provisioning.LastTransitionTime as
+// "when this failure was recorded". meta.SetStatusCondition refreshes that
+// field only when Status FLIPS, so a Model failing the same way run after
+// run would keep its FIRST failure's timestamp forever — one backoff window
+// would elapse and every later pass would sail straight through, restoring
+// the exact hammer the backoff exists to stop. Nothing else in the suite
+// would notice: the condition still reads correct, and the pacing test
+// passes because it builds its own timestamps.
+func TestReportProvisioningCondition_RefreshesTimestampPerFailedRun(t *testing.T) {
+	model := &squallv1alpha1.Model{}
+	stale := metav1.NewTime(time.Now().Add(-time.Hour))
+
+	report := func(runID string) metav1.Condition {
+		reportProvisioningCondition(model, &dstack.ProvisioningFailure{
+			RunID: runID, Reason: "failed_to_start_due_to_no_capacity", Message: "no offers",
+		}, squallv1alpha1.ModelPhaseRecreating)
+		return *meta.FindStatusCondition(model.Status.Conditions, squallv1alpha1.ConditionProvisioning)
+	}
+
+	if got := report("run-1"); got.Reason != squallv1alpha1.ReasonNoCapacity {
+		t.Fatalf("Reason = %q, want %q", got.Reason, squallv1alpha1.ReasonNoCapacity)
+	}
+
+	// Backdate, then observe the SAME run failing again: a re-read of one
+	// failure is not a new failure, and must not push the window out.
+	meta.FindStatusCondition(model.Status.Conditions, squallv1alpha1.ConditionProvisioning).LastTransitionTime = stale
+	if got := report("run-1"); !got.LastTransitionTime.Equal(&stale) {
+		t.Errorf("LastTransitionTime = %v after re-observing the SAME run, want it left at %v: level-triggered reconciles would otherwise extend the backoff forever", got.LastTransitionTime, stale)
+	}
+
+	// A DIFFERENT run failing is a new failure and must restart the window.
+	meta.FindStatusCondition(model.Status.Conditions, squallv1alpha1.ConditionProvisioning).LastTransitionTime = stale
+	got := report("run-2")
+	if got.LastTransitionTime.Equal(&stale) {
+		t.Errorf("LastTransitionTime = %v after a DIFFERENT run failed, want a fresh timestamp: the backoff would lapse permanently and recreate every reconcile", got.LastTransitionTime)
+	}
+	if time.Since(got.LastTransitionTime.Time) > time.Minute {
+		t.Errorf("LastTransitionTime = %v, want approximately now", got.LastTransitionTime)
 	}
 }

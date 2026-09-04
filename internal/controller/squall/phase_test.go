@@ -786,3 +786,88 @@ func TestSleepDue_ReWakeDoesNotSleepMidWake(t *testing.T) {
 			"kills the wake that a held request is still waiting on")
 	}
 }
+
+// TestDecide_ProvisioningBackoffPacesRecreate covers D163: a Model whose
+// last run died because the BACKEND could not satisfy it must not be
+// recreated flat out. Measured 2026-09-04, an unsatisfiable Vast.ai Model
+// minted a fresh dstack run every 15-20s indefinitely, and on a metered
+// backend each of those is an attempt the provider may charge for.
+//
+// The wake still fails OPEN: this only paces the retry. Past the window
+// the very next pass applies again, with no operator action.
+func TestDecide_ProvisioningBackoffPacesRecreate(t *testing.T) {
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	spec := exampleModelSpec()
+	spec.MinReplicas = 0
+
+	priorWith := func(reason string, age time.Duration) squallv1alpha1.ModelStatus {
+		return squallv1alpha1.ModelStatus{
+			Phase: squallv1alpha1.ModelPhaseRecreating,
+			RunID: "run-dead",
+			Conditions: []metav1.Condition{{
+				Type:               squallv1alpha1.ConditionProvisioning,
+				Status:             metav1.ConditionFalse,
+				Reason:             reason,
+				Message:            "dstack run run-dead: no offers",
+				LastTransitionTime: metav1.NewTime(now.Add(-age)),
+			}},
+		}
+	}
+
+	for _, tc := range []struct {
+		name          string
+		prior         squallv1alpha1.ModelStatus
+		wantApply     bool
+		wantThrottled bool
+	}{
+		{
+			name:          "NoCapacity inside the window -> paced, no new run",
+			prior:         priorWith(squallv1alpha1.ReasonNoCapacity, 10*time.Second),
+			wantApply:     false,
+			wantThrottled: true,
+		},
+		{
+			name:      "NoCapacity past the window -> retries, fails open",
+			prior:     priorWith(squallv1alpha1.ReasonNoCapacity, ProvisioningRetryBackoff+time.Second),
+			wantApply: true,
+		},
+		{
+			name:          "rate limited inside the window -> paced",
+			prior:         priorWith(squallv1alpha1.ReasonBackendRateLimited, time.Second),
+			wantApply:     false,
+			wantThrottled: true,
+		},
+		{
+			// A hardStop is a DELIBERATE stop, not the backend refusing us.
+			// A request arriving afterwards deserves a run immediately.
+			name:      "hardStop fired -> never paced",
+			prior:     priorWith(squallv1alpha1.ReasonHardStopFired, time.Second),
+			wantApply: true,
+		},
+		{
+			name:      "no provisioning failure at all -> never paced",
+			prior:     squallv1alpha1.ModelStatus{Phase: squallv1alpha1.ModelPhaseReady, RunID: "run-dead"},
+			wantApply: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			phase, action := Decide(Observed{}, tc.prior, spec, true, now)
+
+			if phase != squallv1alpha1.ModelPhaseRecreating {
+				t.Errorf("phase = %v, want Recreating: pacing a retry must not change what the Model IS", phase)
+			}
+			if action.Apply != tc.wantApply {
+				t.Errorf("Apply = %v, want %v", action.Apply, tc.wantApply)
+			}
+			if action.Throttled != tc.wantThrottled {
+				t.Errorf("Throttled = %v, want %v", action.Throttled, tc.wantThrottled)
+			}
+			if tc.wantThrottled && !action.ThrottledUntil.After(now) {
+				t.Errorf("ThrottledUntil = %v, want a moment after now (%v)", action.ThrottledUntil, now)
+			}
+			if tc.wantApply && action.Replicas != 1 {
+				t.Errorf("Replicas = %d, want 1", action.Replicas)
+			}
+		})
+	}
+}
