@@ -1,0 +1,117 @@
+# Qwen3-8B on a single mid-range card — the cheap end-to-end check.
+#
+# VERIFIED END TO END on 2026-09-04: this file provisioned an RTX 5090 (32GB)
+# on Vast.ai at $0.4463/h, served vLLM 0.28.0, slept on its idle window and
+# released the instance. Every number below is measured on that run.
+#
+#   cold provision -> Ready   9m53s
+#   held request answered     HTTP 200, real generation
+#   warm request              0.8s
+#   sleep -> instance gone    300s idle window, then released immediately
+#   total cost of the run     $0.197
+#
+# Use this rather than the 27B sample when what you want to exercise is
+# SQUALL's lifecycle — wake, serve, sleep, release — not a model's quality.
+# It costs roughly a fifth as much per hour.
+#
+#   kubectl create namespace squall
+#   kubectl apply -f config/samples/squall_v1alpha1_model_qwen3_8b.yaml
+#   # the first request is what wakes it:
+#   curl -X POST http://<squall-proxy>/v1/chat/completions \
+#     -H 'Content-Type: application/json' \
+#     -d '{"model":"qwen3-8b","messages":[{"role":"user","content":"hola"}]}'
+apiVersion: squall.ackstorm.ai/v1alpha1
+kind: Model
+metadata:
+  name: qwen3-8b
+  namespace: squall
+spec:
+  engine: vllm
+
+  # PIN THE INDEX DIGEST, NOT A PER-ARCHITECTURE ONE (D162).
+  #
+  # This digest addresses the multi-arch image INDEX. Its arm64 sibling
+  # (sha256:2a7cde23...) is a single-platform leaf, and pinning that made
+  # dstack require arm64, matched ZERO Vast.ai offers, and reported the
+  # failure as `failed_to_start_due_to_no_capacity` — a message that sends
+  # you tuning CPU, memory and price, none of which can fix it. Measured:
+  # arm64 leaf 0 offers, this index digest 38, amd64 leaf 40.
+  #
+  # Get the right one with:
+  #   docker buildx imagetools inspect vllm/vllm-openai:latest
+  # and take its top-level `Digest:`. `docker pull` on an arm64 machine
+  # hands you the leaf.
+  image: vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14
+
+  # WHICH weights. Squall passes this to vLLM as --model; the CR's own name
+  # is passed as --served-model-name, which is why callers ask for
+  # "qwen3-8b" and not for the HuggingFace id.
+  model: Qwen/Qwen3-8B
+  features:
+    - TextGeneration
+
+  args:
+    # 8k is well under what the card could hold; it keeps the KV cache small
+    # so the wake is dominated by the weight download rather than by warmup.
+    # Raise it if you need the context more than you need the cold start.
+    - --max-model-len
+    - "8192"
+    - --gpu-memory-utilization
+    - "0.90"
+
+  env:
+    VLLM_LOGGING_LEVEL: INFO
+
+  resources:
+    cpu:
+      count: "4.."
+    memory: 16GB..
+    # vLLM needs shared memory for its worker IPC even single-GPU.
+    shmSize: 8GB
+    gpu:
+      # A FLOOR, not a pin. Qwen3-8B in bf16 is ~16GiB of weights; 24GB
+      # leaves room for the KV cache at 8k. The run that produced the
+      # numbers above landed on a 32GB RTX 5090 because that was the
+      # cheapest offer clearing the floor — naming a card would have cost
+      # more for no benefit.
+      memory: 24GB..
+
+  placement:
+    backends: [vastai]
+    # Quoted. An unquoted float fails CRD validation.
+    maxPricePerHour: "0.80"
+
+  probe:
+    path: /health
+    interval: 10s
+    readyAfter: 2
+
+  minReplicas: 0
+
+  # MEASURED cold start was 9m53s. holdTimeout must cover a full cold start,
+  # because there is no warm pool on Vast (see fleet.idleDuration below) —
+  # every wake pays for one.
+  holdTimeout: 20m
+
+  # The idle window before the run drops to zero replicas. Note this expired
+  # 14 minutes BEFORE the GPU finished provisioning on the measured run: the
+  # demand that triggered the wake does not survive the wake. That is
+  # working as designed — the request is held by holdTimeout, not by this —
+  # but it is why the two numbers are not interchangeable.
+  scaleDownDelaySeconds: 300
+
+  provisioningTimeout: 30m
+  drainTimeout: 1m
+  maxLifetime: 168h
+
+  fleet:
+    # INERT ON VAST.AI (D158). dstack only honours an idle window where its
+    # internal `dockerized` flag is true; on Vast.ai, Kubernetes and RunPod
+    # it is false, dstack forces the window to zero and never reads this
+    # value. Measured: instance gone 45s after sleep against a declared 30m.
+    # Kept here so the file stays portable to a VM backend, where it binds.
+    idleDuration: 10m
+
+  health:
+    unhealthyAfter: 15m
+    failureThreshold: 3

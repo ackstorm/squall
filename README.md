@@ -116,8 +116,10 @@ When the hold deadline expires before the GPU is ready, the caller gets `503` wi
 silent hang and never a lie.
 
 Idle works in reverse: once nothing is in flight and the newest request is older than
-`scaleDownDelaySeconds`, the run goes to zero replicas; once the machine itself has been idle
-for `fleet.idleDuration`, dstack releases it.
+`scaleDownDelaySeconds`, the run goes to zero replicas; the machine is then released by
+dstack — immediately on Vast.ai, Kubernetes and RunPod, or after `fleet.idleDuration` on VM
+backends that keep a warm pool. See [Send it a request](#send-it-a-request) for why that
+distinction decides your `holdTimeout`.
 
 ## Quickstart
 
@@ -141,8 +143,8 @@ helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.6 \
 
 **Upgrading from an earlier version: apply the CRD by hand.** Helm installs `crds/` on
 install and *never* upgrades them, so `helm upgrade` alone leaves the Model CRD at whatever
-version you first installed — while reporting success. On 0.1.5 that silently costs you
-`spec.hardStop`, the one guardian that still works when squall-controller is dead:
+version you first installed — while reporting success. Every field a release adds is missing
+until you do this, and `kubectl apply` of a Model using one fails with `unknown field`:
 
 ```bash
 kubectl apply --server-side -f \
@@ -226,7 +228,8 @@ spec:
     maxPricePerHour: "0.80"      # quoted — an unquoted float fails CRD validation
 
   fleet:
-    idleDuration: 2m             # how long the machine survives with no run on it
+    idleDuration: 2m             # how long the machine survives with no run on it —
+                                 # but see below: INERT on Vast.ai and Kubernetes
 
   health:
     unhealthyAfter: 2m           # takes traffic, delivers no 2xx → torn down
@@ -238,10 +241,8 @@ kubectl apply -f qwen-tiny.yaml
 kubectl -n squall-system get models -w
 ```
 
-Worked examples with measured resource and placement choices live in
-[config/samples/](config/samples/): a verified Qwen3.8-27B-FP8 on a single 96GB card, and a
-GLM-5.3-Flash on four of them, transcribed from the
-[rtx6kpro](https://github.com/local-inference-lab/rtx6kpro) runbooks.
+Worked examples with measured resource and placement choices are below, and as runnable
+files in [config/samples/](config/samples/).
 
 ### Send it a request
 
@@ -261,7 +262,22 @@ kubectl -n squall-system get model qwen-tiny -w   # Asleep → Waking → Ready
 kubectl -n squall-system logs -f deploy/squall-proxy
 ```
 
-Leave it alone for `scaleDownDelaySeconds + fleet.idleDuration` and the machine goes away.
+Leave it alone and the machine goes away.
+
+**How long that takes depends on the backend, and `fleet.idleDuration` is not always part of
+the answer.** dstack only honours an idle window where its internal `dockerized` flag is true.
+On **Vast.ai, Kubernetes and RunPod** it is false: dstack forces the window to zero and never
+reads your value, so the machine is released on the first pass after the job stops. Measured
+on Vast.ai — instance gone **45 seconds** after sleep, against a declared `idleDuration: 30m`.
+
+The consequence is not the teardown, it is the wake. There is **no warm pool** on those
+backends, so every wake is a full cold provision and `holdTimeout` has to cover one. Two
+rules follow:
+
+- On Vast.ai/Kubernetes/RunPod the warm window is `scaleDownDelaySeconds` **alone**. Squall
+  warns when `holdTimeout` exceeds it, and it does the arithmetic per backend.
+- On VM backends such as AWS, `fleet.idleDuration` binds and a second wake inside the window
+  is fast.
 
 ### Point LiteLLM at it
 
@@ -275,6 +291,108 @@ model_list:
       api_base: http://squall-proxy.squall-system.svc.cluster.local:8080/v1
       api_key: none
 ```
+
+## Worked examples
+
+Every model here was actually provisioned and served through squall. The numbers are
+measured on the run, not estimated from a spec sheet.
+
+| Model | Card | Price/h | First wake | Verified |
+|---|---|---|---|---|
+| [Qwen3.8-27B-FP8](config/samples/squall_v1alpha1_model.yaml) | 1x RTX PRO 6000 WS, 96GB | $2.003 | 10-15 min | 2026-08-27 |
+| [Qwen3-8B](config/samples/squall_v1alpha1_model_qwen3_8b.yaml) | 1x RTX 5090, 32GB | $0.4463 | 9m 53s | 2026-09-04 |
+| [GLM-5.3-Flash](config/samples/squall_v1alpha1_model_glm53_flash.yaml) | 4x RTX PRO 6000 | $9.00 cap | not yet run | — |
+
+First wake is dominated by pulling the image and then the weights; a warm request afterwards
+is ordinary inference latency. On the Qwen3-8B run: **9m 53s** cold, **0.8s** warm.
+
+### Qwen3.8-27B-FP8 — the flagship, on one card
+
+[`config/samples/squall_v1alpha1_model.yaml`](config/samples/squall_v1alpha1_model.yaml) is a
+runnable CR, heavily commented with why each number is what it is. It provisioned an
+RTX PRO 6000 WS (96GB) on Vast.ai in `cz-czechia` at **$2.003/h**, served chat, streaming and
+vision, then slept and released the instance on its own.
+
+Qwen publish an official FP8 checkpoint, so squall serves that rather than asking vLLM to
+quantize at load: 28.8 GiB of weights, which is why the GPU floor is `90GB..` rather than
+something tighter — FP8 KV cache at 128k context needs the headroom.
+
+```yaml
+spec:
+  engine: vllm
+  image: vllm/vllm-openai@sha256:2286e8533ca8b6bc777594bae30524f1426ba46ca21797524e06df6a94b06635
+  model: Qwen/Qwen3.8-27B-FP8
+  args: [--max-model-len, "131072", --kv-cache-dtype, fp8, --reasoning-parser, qwen3]
+  resources:
+    gpu:
+      name: [RTXPRO6000WS, RTXPRO6000S]
+      memory: 90GB..
+  placement:
+    backends: [vastai]
+    maxPricePerHour: "2.20"
+  holdTimeout: 20m               # must cover a full cold start — no warm pool on Vast
+  scaleDownDelaySeconds: 300
+```
+
+### Qwen3-8B — the cheap one, for checking the lifecycle costs nothing
+
+[`config/samples/squall_v1alpha1_model_qwen3_8b.yaml`](config/samples/squall_v1alpha1_model_qwen3_8b.yaml),
+the same shape at a fifth of the price. Useful when what you want to verify is squall's
+behaviour rather than a model's quality: the whole exercise that produced these numbers —
+provision, serve, sleep, release — cost **$0.197**.
+
+```yaml
+apiVersion: squall.ackstorm.ai/v1alpha1
+kind: Model
+metadata:
+  name: qwen3-8b
+  namespace: squall
+spec:
+  engine: vllm
+  image: vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14
+  model: Qwen/Qwen3-8B
+  features: [TextGeneration]
+  args: [--max-model-len, "8192", --gpu-memory-utilization, "0.90"]
+
+  resources:
+    cpu:
+      count: "4.."
+    memory: 16GB..
+    shmSize: 8GB
+    gpu:
+      memory: 24GB..             # a floor: an RTX 5090 (32GB) cleared it at $0.4463/h
+
+  placement:
+    backends: [vastai]
+    maxPricePerHour: "0.80"
+
+  probe:
+    path: /health
+    interval: 10s
+    readyAfter: 2
+
+  minReplicas: 0
+  holdTimeout: 20m               # cold start measured at 9m53s — leave room
+  scaleDownDelaySeconds: 300
+  provisioningTimeout: 30m
+  fleet:
+    idleDuration: 10m            # inert on Vast.ai; kept for portability to VM backends
+```
+
+> **Pin the multi-arch index digest, not a per-architecture one.** A `@sha256:` digest can
+> address either an image index or a single-platform leaf, and squall's schema cannot tell
+> them apart. Pinning an **arm64** leaf makes dstack require arm64, Vast.ai matches **zero**
+> offers, and the failure is reported as `failed_to_start_due_to_no_capacity` — a message
+> that sends you tuning CPU, memory and price, none of which can fix it. This cost a whole
+> live run. The digest above is the index; get one with
+> `docker buildx imagetools inspect <repo>:<tag>` and use its top-level `Digest:`.
+
+### GLM-5.3-Flash — four cards, tensor-parallel
+
+[`config/samples/squall_v1alpha1_model_glm53_flash.yaml`](config/samples/squall_v1alpha1_model_glm53_flash.yaml)
+requests `gpu.count: "4"` and 64GB of system RAM, transcribed from the
+[rtx6kpro](https://github.com/local-inference-lab/rtx6kpro) field wiki. It is written and
+reviewed but has **not** been run end to end — treat its numbers as sourced, not measured.
 
 ## Status and limitations
 
@@ -290,6 +408,14 @@ model_list:
 - **Marketplace hosts are not data processors.** Internal, non-regulated workloads only.
 - **The unhealthy teardown can flap.** A model broken by configuration rather than by machine
   re-wakes on the next request.
+- **`spec.hardStop` does not fire on the Kubernetes backend.** It is wired correctly — the
+  value reaches dstack's `max_duration` and the runner's submit body — but it is not enforced:
+  a job with `max_duration: 2m` was still running at 621s, and one live Model ran 104 minutes
+  against a 60-minute limit. Root-caused to dstack wrapping commands in `sh -i -c`, so the
+  timeout signals the wrapper shell while the workload is reparented and survives; reported
+  upstream as [dstackai/dstack#4259](https://github.com/dstackai/dstack/issues/4259). **Do not
+  treat `hardStop` as the bound that survives a dead controller.** Whether VM backends enforce
+  it is untested. Ledger D161.
 
 Full list in the [CHANGELOG](CHANGELOG.md); the running engineering ledger is
 [docs/references/deviations-and-findings.md](docs/references/deviations-and-findings.md).
