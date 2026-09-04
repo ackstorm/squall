@@ -5,7 +5,7 @@
 ![status](https://img.shields.io/badge/status-pre--alpha-orange)
 ![release](https://img.shields.io/badge/release-v0.1.6-green)
 ![go](https://img.shields.io/badge/go-1.26.6-00ADD8)
-![license](https://img.shields.io/badge/license-Apache%202.0-blue)
+![license](https://img.shields.io/badge/license-MIT-blue)
 
 Squall gives a Kubernetes cluster access to GPU capacity it does not own. You declare a
 `Model` custom resource in Git; squall rents a GPU from an external provider when the first
@@ -49,33 +49,16 @@ GPU a consequence of traffic rather than a standing cost: the `Model` sits at ze
 until a request arrives, and returns to zero once the idle window passes with nothing
 in flight.
 
-### The data path is squall's, not dstack's
+### One model, many places to run it
 
-A request reaches a replica one of two ways, and they are not equivalent.
+A `Model` names what to serve and the shape of machine it needs — a VRAM floor, a price
+ceiling, the regions it may run in. It does not name a provider or a particular machine.
+Squall asks dstack for the cheapest offer satisfying those constraints, wherever that happens
+to be today, and the same CR moves between Vast.ai, AWS and DigitalOcean unchanged.
 
-**Direct over SSH (preferred).** `squall-proxy` opens its own SSH connection to the replica
-and forwards HTTP inside it. dstack is not in the request path at all.
-
-**Through dstack's service proxy (fallback).** Always available, works on every backend
-topology, used automatically whenever the direct path is not.
-
-Measured 2026-08-28 on one RTXPRO6000WS, same prompt and concurrency, minutes apart:
-
-| concurrency | via dstack | direct over SSH |
-|---|---|---|
-| 32 | 746 tok/s | **1010 tok/s** |
-| 128 | 97/128 ok, 31× HTTP 500, 407 tok/s | **128/128 ok, 1857 tok/s** |
-| 256 | not attempted | **256/256 ok, 2106 tok/s** |
-
-dstack's proxy exposes its repository and auth as FastAPI `yield` dependencies torn down
-only after the response completes, so **every streamed generation pins two database
-connections for its entire lifetime**. Its connection pool — not the GPU — is the ceiling.
-The 31 failures above coincided exactly with `pg_stat_activity` reaching
-`poolSize + maxOverflow + 1`.
-
-The direct path fails soft in every case: no published endpoint, a topology needing more
-than one SSH hop, a missing key, a refused dial — each falls through to dstack's proxy.
-Turning it on cannot break a request that worked before. See
+Requests reach the replica through `squall-proxy`, which forwards over its own SSH tunnel
+where the topology allows it and falls back to dstack's service proxy where it does not. The
+choice is automatic and per-request; nothing in the `Model` selects it. See
 [docs/operating.md](docs/operating.md) for how it authenticates and how to tell which path a
 request took.
 
@@ -396,15 +379,16 @@ reviewed but has **not** been run end to end — treat its numbers as sourced, n
 
 ## Status and limitations
 
-**Pre-alpha, but it serves.** Verified end to end on 2026-08-28 against real Vast.ai GPUs, at
-256 concurrent generations with zero failures. What that verification does *not* cover:
+**Pre-alpha.** Squall has served production-shaped traffic on rented GPUs, and the worked
+examples above are real runs. It is not yet something to put in front of untrusted users, for
+these reasons:
 
 - **`squall-proxy` performs no authentication.** Anyone who can reach it can wake capacity and
   spend money. Deploy it on a trusted network, or put an authenticating gateway in front.
   This is the constraint every other limitation assumes.
 - **No admission control once a model is Ready.** The proxy forwards unlimited concurrency
-  into whatever capacity exists, so per-stream throughput — not squall — is what a caller
-  feels under load. Measured: ~1000 tok/s split across ~57 streams is ~17 tok/s each.
+  into whatever capacity exists. Nothing queues, sheds or prioritises, so under load each
+  caller's share of the replica shrinks rather than any request being refused.
 - **Marketplace hosts are not data processors.** Internal, non-regulated workloads only.
 - **The unhealthy teardown can flap.** A model broken by configuration rather than by machine
   re-wakes on the next request.
@@ -484,4 +468,5 @@ Security reports: [SECURITY.md](SECURITY.md).
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+MIT — see [LICENSE](LICENSE). [NOTICE](NOTICE) records what Squall depends on and
+under which terms.
