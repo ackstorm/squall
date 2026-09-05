@@ -35,8 +35,8 @@ func TestUpdateActivityStatus_LastRequestAtNeverGoesBackwards(t *testing.T) {
 }
 
 func TestApplyDurationsFor_DirectionAndHardStop(t *testing.T) {
-	onDemand := &squallv1alpha1.Model{Spec: squallv1alpha1.ModelSpec{MinReplicas: 0, HardStop: metav1.Duration{Duration: 24 * time.Hour}, Fleet: squallv1alpha1.ModelFleet{IdleDuration: metav1.Duration{Duration: 10 * time.Minute}}}}
-	pinned := &squallv1alpha1.Model{Spec: squallv1alpha1.ModelSpec{MinReplicas: 1, HardStop: metav1.Duration{Duration: 24 * time.Hour}, Fleet: squallv1alpha1.ModelFleet{IdleDuration: metav1.Duration{Duration: 10 * time.Minute}}}}
+	onDemand := &squallv1alpha1.Model{Spec: squallv1alpha1.ModelSpec{MinReplicas: 0, HardStop: metav1.Duration{Duration: 24 * time.Hour}}}
+	pinned := &squallv1alpha1.Model{Spec: squallv1alpha1.ModelSpec{MinReplicas: 1, HardStop: metav1.Duration{Duration: 24 * time.Hour}}}
 	if idle, hard := applyDurationsFor(onDemand, Action{Replicas: 0, Current: &dstack.Run{Replicas: 1}}); idle != 0 || hard != 0 {
 		t.Fatalf("pre-upgrade sleep = %v/%v", idle, hard)
 	}
@@ -61,7 +61,6 @@ func TestApplyDurationsFor_AlwaysSendsZeroIdle(t *testing.T) {
 		Spec: squallv1alpha1.ModelSpec{
 			MinReplicas: 0,
 			HardStop:    metav1.Duration{Duration: 2 * time.Hour},
-			Fleet:       squallv1alpha1.ModelFleet{IdleDuration: metav1.Duration{Duration: 10 * time.Minute}},
 		},
 	}
 	idle, hard := applyDurationsFor(model, Action{Replicas: 1})

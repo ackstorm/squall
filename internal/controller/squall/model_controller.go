@@ -977,7 +977,7 @@ func (r *ModelReconciler) recordMetrics(model *squallv1alpha1.Model, observedPer
 			t := model.Status.LastRequestAt.Time
 			last = &t
 		}
-		r.IdleMetrics.Observe(model.Namespace, model.Name, last, runActive, time.Duration(model.Spec.ScaleDownDelaySeconds)*time.Second)
+		r.IdleMetrics.Observe(model.Namespace, model.Name, last, runActive, model.Spec.IdleTimeout.Duration)
 	}
 }
 
@@ -1023,7 +1023,7 @@ func (r *ModelReconciler) observe(ctx context.Context, runName, activityKey stri
 		// §6: Ready has two named evidences, whichever arrives first —
 		// (a) dstack's own probe state (F35), (b) a first-party forward
 		// success reported by the proxy. Squall probes nothing itself.
-		observed.Ready = run.ProbesReady || freshSuccess(observed.Activity, now, time.Duration(spec.ScaleDownDelaySeconds)*time.Second)
+		observed.Ready = run.ProbesReady || freshSuccess(observed.Activity, now, spec.IdleTimeout.Duration)
 	}
 	return observed, nil
 }
@@ -1171,7 +1171,7 @@ func (r *ModelReconciler) activityHTTPClient() *http.Client {
 // hasDemand reports whether the proxy's coalesced demand annotation (see
 // squallv1alpha1.DemandAnnotation) is present AND not yet self-expired:
 // its value is the RFC3339 instant demand was last coalesced, and it only
-// counts while now is within ScaleDownDelaySeconds of that instant — a
+// counts while now is within IdleTimeout of that instant — a
 // stale annotation the proxy failed to clear (or never will, e.g. after a
 // proxy crash) must not pin a Model awake forever (block 7+8 plan §2). A
 // missing key, or a value that fails to parse as RFC3339, both resolve to
@@ -1185,8 +1185,7 @@ func hasDemand(m *squallv1alpha1.Model, now time.Time) bool {
 	if err != nil {
 		return false
 	}
-	ttl := time.Duration(m.Spec.ScaleDownDelaySeconds) * time.Second
-	return now.Sub(demandSince) < ttl
+	return now.Sub(demandSince) < m.Spec.IdleTimeout.Duration
 }
 
 // SetupWithManager sets up the controller with the Manager.

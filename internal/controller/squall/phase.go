@@ -73,7 +73,7 @@ type ActivityEvidence struct {
 
 	// NewestLastRequestAt is meaningful only when Complete && AllIdle:
 	// the most recent LastRequestAt across every replica, the anchor
-	// Decide compares against spec.ScaleDownDelaySeconds.
+	// Decide compares against spec.IdleTimeout.
 	NewestLastRequestAt time.Time
 
 	// NewestLastSuccessAt is the newest committed-forward instant across
@@ -168,7 +168,7 @@ type Action struct {
 // Phase 6 implemented only the wake ("0→1, fails open") direction. This
 // block (7+8) adds the opposite, fail-safe direction: once observed.Run is
 // up, an on-demand Model (spec.MinReplicas == 0) with clean, complete,
-// idle Activity evidence aged past ScaleDownDelaySeconds flips back to
+// idle Activity evidence aged past IdleTimeout flips back to
 // Replicas: 0 (Asleep, F17) — never on hasDemand's absence alone, only on
 // the aggregation (§6). A pinned Model (MinReplicas == 1) never takes this
 // branch (AC17). provisioningTimeout's destructive trigger is still Phase
@@ -257,7 +257,7 @@ func Decide(
 	// false today — see its doc comment). Gating this on Ready would make
 	// the sleep path unreachable in the running system, not merely
 	// cautious.
-	if spec.MinReplicas == 0 && sleepDue(observed.Activity, prior.LastRequestAt, spec.ScaleDownDelaySeconds, now) {
+	if spec.MinReplicas == 0 && sleepDue(observed.Activity, prior.LastRequestAt, spec.IdleTimeout.Duration, now) {
 		return squallv1alpha1.ModelPhaseAsleep, Action{
 			Apply:    true,
 			Replicas: 0,
@@ -271,7 +271,7 @@ func Decide(
 	// two. Same actuation, different diagnosis — and note it fires regardless of
 	// hasDemand: demand is not a veto on a replica that cannot serve it.
 	if spec.MinReplicas == 0 && unhealthyDue(observed.Activity, observed.Ready, prior.WakeStartedAt,
-		spec.Health.UnhealthyAfter.Duration, spec.Health.FailureThreshold, spec.ScaleDownDelaySeconds, now) {
+		spec.Health.UnhealthyAfter.Duration, spec.Health.FailureThreshold, spec.IdleTimeout.Duration, now) {
 		return squallv1alpha1.ModelPhaseAsleep, Action{
 			Apply:     true,
 			Replicas:  0,
@@ -367,7 +367,7 @@ func uncontrolledTimeoutFor(spec squallv1alpha1.ModelSpec) time.Duration {
 		}
 		return d
 	}
-	d := 4*time.Duration(spec.ScaleDownDelaySeconds)*time.Second + DefaultUncontrolledGrace
+	d := 4*spec.IdleTimeout.Duration + DefaultUncontrolledGrace
 	if d > MaxUncontrolledTimeout {
 		d = MaxUncontrolledTimeout
 	}
@@ -386,13 +386,13 @@ func provisioningDue(wakeStartedAt *metav1.Time, ready bool, timeout time.Durati
 }
 
 // sleepDue is §6's fail-safe flip condition: clean, complete, idle
-// evidence, aged past ScaleDownDelaySeconds. activity == nil ("not
+// evidence, aged past IdleTimeout. activity == nil ("not
 // evaluated") and activity.Complete == false both correctly return false —
 // there is no default-to-idle branch. The time comparison is a strict
 // inequality kept separate from AllIdle on purpose (T1 in the block 7+8
 // plan: a mutation that fires on AllIdle alone, dropping this comparison,
 // must turn red).
-func sleepDue(activity *ActivityEvidence, durableLastRequestAt *metav1.Time, scaleDownDelaySeconds int32, now time.Time) bool {
+func sleepDue(activity *ActivityEvidence, durableLastRequestAt *metav1.Time, idleTimeout time.Duration, now time.Time) bool {
 	if activity == nil || !activity.Complete || !activity.AllIdle {
 		return false
 	}
@@ -403,7 +403,7 @@ func sleepDue(activity *ActivityEvidence, durableLastRequestAt *metav1.Time, sca
 		}
 		anchor = durableLastRequestAt.Time
 	}
-	return now.Sub(anchor) > time.Duration(scaleDownDelaySeconds)*time.Second
+	return now.Sub(anchor) > idleTimeout
 }
 
 // DefaultUnhealthyFailureThreshold is the evidence floor used when a Model
@@ -449,8 +449,8 @@ func unhealthyDue(
 	ready bool,
 	wakeStartedAt *metav1.Time,
 	unhealthyAfter time.Duration,
-	threshold int32,
-	scaleDownDelaySeconds int32,
+	failureThreshold int32,
+	idleTimeout time.Duration,
 	now time.Time,
 ) bool {
 	if !ready || unhealthyAfter <= 0 {
@@ -459,13 +459,13 @@ func unhealthyDue(
 	if activity == nil || !activity.Complete {
 		return false
 	}
-	if now.Sub(activity.NewestLastRequestAt) > time.Duration(scaleDownDelaySeconds)*time.Second {
+	if now.Sub(activity.NewestLastRequestAt) > idleTimeout {
 		return false // no current traffic: sleepDue's business, not this one's.
 	}
-	if threshold <= 0 {
-		threshold = DefaultUnhealthyFailureThreshold
+	if failureThreshold <= 0 {
+		failureThreshold = DefaultUnhealthyFailureThreshold
 	}
-	if activity.FailuresSinceSuccess < int(threshold) {
+	if activity.FailuresSinceSuccess < int(failureThreshold) {
 		return false // not enough evidence yet; one bad request is not a verdict.
 	}
 	anchor := activity.NewestLastSuccessAt

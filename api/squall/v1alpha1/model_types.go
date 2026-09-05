@@ -236,27 +236,6 @@ type ModelPlacement struct {
 	MaxPricePerHour *Price `json:"maxPricePerHour,omitempty"`
 }
 
-// ModelFleet configures the dstack fleet backing this model's runs.
-type ModelFleet struct {
-	// IdleDuration is how long the underlying machine is kept after the
-	// job-layer flip to replicas: 0 before the fleet releases it (§6).
-	// It is REQUIRED with NO default: on a VM backend dstack's own default
-	// is 3 days (F21), the single most expensive footgun in the system —
-	// an operator who forgets this field pays for an idle GPU for three
-	// days, not minutes. It also directly conditions §7: `hold` is only
-	// viable inside this warm window.
-	//
-	// It binds on VM backends only, and dstack decides that by the
-	// `dockerized` flag rather than by anything configurable here (F21b,
-	// D158). On Vast.ai and on Kubernetes the flag is false, dstack forces
-	// the idle window to zero and never reads this value: the instance is
-	// released on the first pass after the job stops. There the field is
-	// inert — and so is the warm pool, so every wake there is a full cold
-	// provision and `holdTimeout` has to cover one.
-	// +kubebuilder:validation:Required
-	IdleDuration metav1.Duration `json:"idleDuration"`
-}
-
 // ModelSpec defines the desired state of Model.
 //
 // Shaped deliberately after kubeai.org/v1 Model (F27) so a reviewer sees
@@ -390,20 +369,21 @@ type ModelSpec struct {
 	// +optional
 	HoldTimeout metav1.Duration `json:"holdTimeout,omitempty"`
 
-	// ScaleDownDelaySeconds is the job-layer idle window: once in-flight
-	// requests are 0 and the newest request is older than this many
-	// seconds, the controller flips replicas: 0 (§6). This releases the
-	// *job*, not the machine — see ModelFleet.IdleDuration for that layer.
+	// IdleTimeout is how long squall keeps paying after the last request,
+	// with the model loaded and answering instantly. Once in-flight
+	// requests are 0 and the newest request is older than this, the
+	// controller flips replicas: 0 and dstack releases the machine (§6).
+	// There is no warm pool on any backend, by design, so the next wake
+	// after this window is a full cold start and holdTimeout has to cover
+	// one.
 	//
-	// Defaulted (D105): this value is also hasDemand's TTL, so a zero here
-	// makes an on-demand Model permanently unwakeable — the annotation the
-	// proxy writes expires the instant it lands. The default is the spec's
-	// own §5.1 example value, and because omitempty drops an explicit 0
-	// from serialization, even a literal `scaleDownDelaySeconds: 0` reads
-	// back as 300 rather than as "never wake".
-	// +kubebuilder:default=300
+	// It is ALSO hasDemand's TTL, so a zero makes an on-demand Model
+	// permanently unwakeable — the annotation the proxy writes would expire
+	// the instant it lands. Unlike the int32 it replaces, a written `0s`
+	// survives serialization, so validation rejects it explicitly.
+	// +kubebuilder:default="5m"
 	// +optional
-	ScaleDownDelaySeconds int32 `json:"scaleDownDelaySeconds,omitempty"`
+	IdleTimeout metav1.Duration `json:"idleTimeout,omitempty"`
 
 	// UncontrolledTimeout bounds how long capacity may stay up while idle
 	// evidence is unavailable. Nil defaults to min(4x the idle window + 15m,
@@ -421,10 +401,6 @@ type ModelSpec struct {
 	// +kubebuilder:default={}
 	// +optional
 	Health ModelHealth `json:"health,omitempty"`
-
-	// Fleet configures the dstack fleet backing this model, in particular
-	// the machine-release idle window.
-	Fleet ModelFleet `json:"fleet"`
 
 	// DrainTimeout bounds the in-flight drain the deletion finalizer
 	// performs before runs are deleted and the fleet released (§5.2).
@@ -568,7 +544,7 @@ const (
 // carry (it is a thin, stateless data-path binary in a separate failure
 // domain). This package is the lightweight contract both binaries already
 // import. The value MUST be an RFC3339 timestamp: hasDemand treats it as
-// demand only while now is within spec.ScaleDownDelaySeconds of that
+// demand only while now is within spec.IdleTimeout of that
 // instant (block 7+8 plan §2's self-expiry) — a stale value the proxy
 // failed to clear must not pin a Model awake forever, and a value that
 // fails to parse resolves to "no demand", never to the old

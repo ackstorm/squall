@@ -38,7 +38,7 @@ func TestReconcile_EndpointSliceChurn_NoPrematureSleep(t *testing.T) {
 
 	const name = "qwen-7-2"
 	spec := exampleModelSpec()
-	spec.ScaleDownDelaySeconds = 1 // small, so "aged past" needs no FakeClock/real sleep >1s
+	spec.IdleTimeout = metav1.Duration{Duration: time.Second} // small, so "aged past" needs no FakeClock/real sleep >1s
 	model := &squallv1alpha1.Model{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       name,
@@ -87,7 +87,7 @@ func TestReconcile_EndpointSliceChurn_NoPrematureSleep(t *testing.T) {
 	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(model)}
 
 	// Pass 1: B unreachable -> incomplete evidence -> must NOT sleep, even
-	// though A alone is idle and long past scaleDownDelaySeconds.
+	// though A alone is idle and long past idleTimeout.
 	if _, err := r.Reconcile(ctx, req); err != nil {
 		t.Fatalf("reconcile (B unreachable): %v", err)
 	}
@@ -159,7 +159,7 @@ func TestReconcile_SleepFlip_RunPredatesIdleDuration(t *testing.T) {
 	defer cancel()
 	const name = "qwen-predates-idle"
 	spec := exampleModelSpec()
-	spec.ScaleDownDelaySeconds = 1
+	spec.IdleTimeout = metav1.Duration{Duration: time.Second}
 	model := &squallv1alpha1.Model{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: manualNamespace, Finalizers: []string{ModelFinalizer}}, Spec: spec}
 	if err := k8sClient.Create(ctx, model); err != nil {
 		t.Fatal(err)

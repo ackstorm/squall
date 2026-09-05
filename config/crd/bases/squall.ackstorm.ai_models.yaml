@@ -136,32 +136,6 @@ spec:
                   type: string
                 minItems: 1
                 type: array
-              fleet:
-                description: |-
-                  Fleet configures the dstack fleet backing this model, in particular
-                  the machine-release idle window.
-                properties:
-                  idleDuration:
-                    description: |-
-                      IdleDuration is how long the underlying machine is kept after the
-                      job-layer flip to replicas: 0 before the fleet releases it (§6).
-                      It is REQUIRED with NO default: on a VM backend dstack's own default
-                      is 3 days (F21), the single most expensive footgun in the system —
-                      an operator who forgets this field pays for an idle GPU for three
-                      days, not minutes. It also directly conditions §7: `hold` is only
-                      viable inside this warm window.
-
-                      It binds on VM backends only, and dstack decides that by the
-                      `dockerized` flag rather than by anything configurable here (F21b,
-                      D158). On Vast.ai and on Kubernetes the flag is false, dstack forces
-                      the idle window to zero and never reads this value: the instance is
-                      released on the first pass after the job stops. There the field is
-                      inert — and so is the warm pool, so every wake there is a full cold
-                      provision and `holdTimeout` has to cover one.
-                    type: string
-                required:
-                - idleDuration
-                type: object
               hardStop:
                 default: 24h
                 description: |-
@@ -237,6 +211,22 @@ spec:
                   HoldTimeout bounds how long squall-proxy blocks a cold request
                   waiting for the model to wake before it falls back (§7). 0 means
                   answer immediately without holding.
+                type: string
+              idleTimeout:
+                default: 5m
+                description: |-
+                  IdleTimeout is how long squall keeps paying after the last request,
+                  with the model loaded and answering instantly. Once in-flight
+                  requests are 0 and the newest request is older than this, the
+                  controller flips replicas: 0 and dstack releases the machine (§6).
+                  There is no warm pool on any backend, by design, so the next wake
+                  after this window is a full cold start and holdTimeout has to cover
+                  one.
+
+                  It is ALSO hasDemand's TTL, so a zero makes an on-demand Model
+                  permanently unwakeable — the annotation the proxy writes would expire
+                  the instant it lands. Unlike the int32 it replaces, a written `0s`
+                  survives serialization, so validation rejects it explicitly.
                 type: string
               image:
                 description: |-
@@ -466,22 +456,6 @@ spec:
                       raised above the container default.
                     type: string
                 type: object
-              scaleDownDelaySeconds:
-                default: 300
-                description: |-
-                  ScaleDownDelaySeconds is the job-layer idle window: once in-flight
-                  requests are 0 and the newest request is older than this many
-                  seconds, the controller flips replicas: 0 (§6). This releases the
-                  *job*, not the machine — see ModelFleet.IdleDuration for that layer.
-
-                  Defaulted (D105): this value is also hasDemand's TTL, so a zero here
-                  makes an on-demand Model permanently unwakeable — the annotation the
-                  proxy writes expires the instant it lands. The default is the spec's
-                  own §5.1 example value, and because omitempty drops an explicit 0
-                  from serialization, even a literal `scaleDownDelaySeconds: 0` reads
-                  back as 300 rather than as "never wake".
-                format: int32
-                type: integer
               secretEnv:
                 additionalProperties:
                   description: |-
@@ -539,7 +513,6 @@ spec:
             required:
             - engine
             - features
-            - fleet
             - image
             - minReplicas
             - placement

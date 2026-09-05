@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	squallv1alpha1 "github.com/ackstorm/squall/api/squall/v1alpha1"
 )
 
@@ -17,7 +19,7 @@ import (
 // "demand forever", the pre-TTL bug self-expiry replaced.
 func TestHasDemand(t *testing.T) {
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
-	const ttlSeconds = 300 // ScaleDownDelaySeconds
+	const ttl = 300 * time.Second // IdleTimeout
 
 	tests := []struct {
 		name        string
@@ -55,7 +57,7 @@ func TestHasDemand(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := &squallv1alpha1.Model{}
 			m.Annotations = tt.annotations
-			m.Spec.ScaleDownDelaySeconds = ttlSeconds
+			m.Spec.IdleTimeout = metav1.Duration{Duration: ttl}
 
 			got := hasDemand(m, now)
 			if got != tt.want {

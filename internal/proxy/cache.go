@@ -52,13 +52,13 @@ type ModelSnapshot struct {
 	// cold request before answering the wait contract on deadline.
 	HoldTimeout time.Duration
 
-	// ScaleDownDelaySeconds is spec.scaleDownDelaySeconds — this Model's OWN
-	// demand-annotation TTL (LIVE-3, corrected). refreshIntervalFor derives
-	// this hold's demand-refresh cadence from it: a single proxy-wide
-	// interval cannot be right for every Model at once, since two Models can
-	// disagree about their TTL in the same cluster (measured live: a 300s
-	// production Model and a 2s e2e fixture, at the same time).
-	ScaleDownDelaySeconds int32
+	// IdleTimeout is spec.idleTimeout — this Model's OWN demand-annotation
+	// TTL (LIVE-3, corrected). refreshIntervalFor derives this hold's
+	// demand-refresh cadence from it: a single proxy-wide interval cannot be
+	// right for every Model at once, since two Models can disagree about
+	// their TTL in the same cluster (measured live: a 300s production Model
+	// and a 2s e2e fixture, at the same time).
+	IdleTimeout time.Duration
 
 	// Created is the Model CR's creationTimestamp, surfaced as OpenAI's
 	// required `created` field on /v1/models. It comes from the CR rather
@@ -238,7 +238,15 @@ func RunInformerCache(ctx context.Context, client dynamic.Interface, namespace s
 		phase, _, _ := unstructured.NestedString(u.Object, "status", "phase")
 		holdTimeout, _, _ := unstructured.NestedString(u.Object, "spec", "holdTimeout")
 		hold, _ := time.ParseDuration(holdTimeout) // zero value on unset/unparseable — Await then has no deadline slack, which is the safe direction (task 9's "fails open" is about wake, not about inventing a hold).
-		scaleDownDelaySeconds, _, _ := unstructured.NestedInt64(u.Object, "spec", "scaleDownDelaySeconds")
+		idleTimeout, _, _ := unstructured.NestedString(u.Object, "spec", "idleTimeout")
+		idle, err := time.ParseDuration(idleTimeout)
+		if err != nil {
+			// Unparseable or absent resolves to zero, which refreshIntervalFor
+			// reads as "no TTL configured" and answers with the proxy-wide
+			// ceiling. Guessing a duration here would be worse: a held request
+			// refreshing too slowly ages its own demand anchor out (LIVE-3).
+			idle = 0
+		}
 		features, _, _ := unstructured.NestedStringSlice(u.Object, "spec", "features")
 		owner, _, _ := unstructured.NestedString(u.Object, "spec", "owner")
 		serviceURL, _, _ := unstructured.NestedString(u.Object, "status", "serviceURL")
@@ -259,18 +267,18 @@ func RunInformerCache(ctx context.Context, client dynamic.Interface, namespace s
 			}
 		}
 		cache.Set(u.GetName(), ModelSnapshot{
-			Namespace:             u.GetNamespace(),
-			Replica:               replicaFromStatus(u),
-			Phase:                 squallv1alpha1.ModelPhase(phase),
-			HoldTimeout:           hold,
-			ScaleDownDelaySeconds: int32(scaleDownDelaySeconds),
-			Created:               u.GetCreationTimestamp().Time,
-			Features:              features,
-			Owner:                 owner,
-			ServiceURL:            serviceURL,
-			ServedModel:           servedModel,
-			ForwardModel:          forwardModel,
-			Schedulable:           schedulable,
+			Namespace:    u.GetNamespace(),
+			Replica:      replicaFromStatus(u),
+			Phase:        squallv1alpha1.ModelPhase(phase),
+			HoldTimeout:  hold,
+			IdleTimeout:  idle,
+			Created:      u.GetCreationTimestamp().Time,
+			Features:     features,
+			Owner:        owner,
+			ServiceURL:   serviceURL,
+			ServedModel:  servedModel,
+			ForwardModel: forwardModel,
+			Schedulable:  schedulable,
 		})
 	}
 	remove := func(obj interface{}) {
