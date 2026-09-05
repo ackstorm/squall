@@ -225,9 +225,7 @@ spec:
   # then loaded into VRAM. UNMEASURED for this model on this hardware —
   # expect to tune it after the first real wake.
   holdTimeout: 20m
-  scaleDownDelaySeconds: 300
-  fleet:
-    idleDuration: 10m
+  idleTimeout: 5m
   drainTimeout: 60s
   provisioningTimeout: 30m
   maxLifetime: 168h
