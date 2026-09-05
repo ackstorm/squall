@@ -9,7 +9,7 @@ versions, and a change that would be breaking after 1.0 is only a minor bump
 here. Anything that can cost money or terminate a running generation is called
 out explicitly, because that is the class of change worth reading twice.
 
-## [Unreleased]
+## [0.2.0] — 2026-09-05
 
 ### BREAKING
 
