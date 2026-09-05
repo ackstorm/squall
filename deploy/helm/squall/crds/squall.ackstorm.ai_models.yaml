@@ -227,6 +227,23 @@ spec:
                   permanently unwakeable — the annotation the proxy writes would expire
                   the instant it lands. Unlike the int32 it replaces, a written `0s`
                   survives serialization, so validation rejects it explicitly.
+
+                  The floor is NOT zero, though zero is all validation can safely
+                  reject. An IdleTimeout shorter than the controller's own idle
+                  requeue interval (SQUALL_IDLE_REQUEUE_INTERVAL, 15s by default) is
+                  unwakeable for the same reason: the proxy stamps demand, the stamp
+                  expires before Reconcile next evaluates the Model, and the wake
+                  never happens — the request 503s and so does every retry. The stamp
+                  is RFC3339 at SECOND granularity, so up to another second is lost to
+                  truncation. Keep this comfortably above the requeue interval; the 5m
+                  default is 20x it. Measured, ledger D171: against a 2s requeue,
+                  idleTimeout 2s never woke at all while 8s and 30s reached Ready in
+                  about two seconds.
+
+                  This only bites when the stamp is not refreshed. While squall-proxy
+                  is actively holding a request it re-stamps at IdleTimeout/10 (floored
+                  at 500ms), so a caller waiting out a cold start keeps its own wake
+                  alive however long provisioning takes.
                 type: string
               image:
                 description: |-

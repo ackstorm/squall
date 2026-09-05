@@ -9,7 +9,7 @@ versions, and a change that would be breaking after 1.0 is only a minor bump
 here. Anything that can cost money or terminate a running generation is called
 out explicitly, because that is the class of change worth reading twice.
 
-## [0.2.0] — 2026-09-05
+## [0.1.7] — 2026-09-05
 
 ### BREAKING
 
@@ -41,6 +41,16 @@ out explicitly, because that is the class of change worth reading twice.
   expires demand the instant squall-proxy writes it and the Model can never
   wake; `provisioningTimeout` is the only bound on a run that never reaches
   Ready, and a non-positive value silently disables it.
+
+  **Picking a value: the floor is not zero.** Because `idleTimeout` is also
+  the demand TTL, any value shorter than the controller's idle requeue
+  interval (`SQUALL_IDLE_REQUEUE_INTERVAL`, 15s by default) leaves a Model
+  unwakeable for the same reason a zero does — the demand stamp expires
+  before the controller next evaluates the Model, and the request 503s along
+  with every retry. Validation rejects only the unambiguous zero. Keep
+  `idleTimeout` comfortably above the requeue interval; the `5m` default is
+  20x it. README's "Choosing `idleTimeout`" covers the cost/latency trade and
+  the measurements behind this (ledger D171).
 
 ### Changed
 

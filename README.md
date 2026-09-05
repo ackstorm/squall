@@ -219,7 +219,8 @@ spec:
 
   minReplicas: 0                 # 0 = sleeps when idle; 1 = always on
   holdTimeout: 10m               # how long a request waits for a cold start
-  idleTimeout: 10m               # idle window before the run — and the machine — release
+  idleTimeout: 10m               # idle window before the run — and the machine — release.
+                                 # Also the demand signal's TTL: see Choosing idleTimeout.
   provisioningTimeout: 20m       # a wake that never becomes Ready is destroyed
   drainTimeout: 30s
   maxLifetime: 4h
@@ -278,6 +279,66 @@ The consequence is not the teardown, it is the wake. There is **no warm pool any
 every wake is a full cold provision and `holdTimeout` has to cover one — a `holdTimeout`
 short enough to habitually time out before a cold start finishes is a misconfiguration in all
 but intent, and squall warns when it looks that short relative to `provisioningTimeout`.
+
+### Choosing `idleTimeout`
+
+`idleTimeout` is the only idle knob, and it does **three** jobs at once. The first two are
+the obvious ones; the third is the one that surprises people.
+
+1. **How long you keep paying with the model hot.** The clock starts from the *newest*
+   request, and only runs once in-flight requests reach zero. A request arriving inside the
+   window is answered by a model already resident in VRAM — sub-second. One arriving outside
+   it pays a full cold start.
+2. **When the machine is released.** Squall always sends dstack `idle_duration: 0`, so the
+   run and the instance go together. There is no second, longer window keeping a warm
+   machine around — releasing the job releases the hardware, on every backend.
+3. **How long a demand signal stays valid.** When `squall-proxy` sees a request for a
+   sleeping model it stamps an annotation on the `Model`, and `idleTimeout` is that
+   annotation's TTL. This is what makes a *too small* value dangerous rather than merely
+   expensive.
+
+#### The cost/latency trade
+
+Every second of `idleTimeout` is billed at the full GPU rate, whether or not a request
+arrives. So the knob is really asking: *how much idle GPU time is one avoided cold start
+worth?*
+
+Cold starts are not cheap. Measured on Vast.ai with a small fixture: a wake takes **~2m12s**,
+and teardown completes **45 seconds** after sleep. Against a `$1.89/h` card, five minutes of
+idle costs about **$0.16** — usually less than making the next caller wait two minutes.
+
+Rules of thumb:
+
+| Traffic | Reasonable `idleTimeout` |
+|---|---|
+| Bursty and interactive (a person, an IDE, a chat UI) | `5m`–`15m` — bridge the gaps *within* a session |
+| Batch, on a schedule | short, or `minReplicas: 1` for the duration of the run |
+| Steady all day | `minReplicas: 1` — you are paying anyway; stop re-provisioning |
+| Rare and latency-tolerant | `1m`–`5m`, and raise `holdTimeout` so callers wait rather than get a 503 |
+
+#### There is a floor, and it is not zero
+
+Because of job 3, an `idleTimeout` shorter than the controller's own reconcile cadence makes
+a Model **permanently unwakeable**: the proxy stamps demand, the annotation expires before
+the controller next evaluates the `Model`, and the wake it was supposed to trigger never
+happens. The request 503s, and every retry does the same.
+
+Two details set the floor:
+
+- The controller re-evaluates an idle `Model` on its **idle requeue interval — 15s by
+  default** (`SQUALL_IDLE_REQUEUE_INTERVAL`).
+- The demand annotation is stamped at RFC3339 **second** granularity, so up to another
+  second is lost to truncation.
+
+Validation rejects only a literal `0s`, which is the unambiguous case. **Keep `idleTimeout`
+comfortably above your requeue interval** — the `5m` default is 20× it, and anything at or
+below about `30s` deserves a second look and a matching `SQUALL_IDLE_REQUEUE_INTERVAL`.
+Measured directly (ledger D171): with a 2s requeue, `idleTimeout: 2s` never woke at all,
+while `8s` and `30s` reached `Ready` about two seconds after the request.
+
+This only bites when the demand stamp is *not* refreshed. While `squall-proxy` is actively
+holding a request it re-stamps at `idleTimeout/10` (floored at 500ms), so a caller waiting
+out a cold start keeps its own wake alive regardless of how long provisioning takes.
 
 ### Point LiteLLM at it
 
