@@ -20,6 +20,7 @@ import (
 
 	squallv1alpha1 "github.com/ackstorm/squall/api/squall/v1alpha1"
 	"github.com/ackstorm/squall/internal/dstack"
+	"github.com/ackstorm/squall/internal/dstack/mock"
 )
 
 // TestReconcile_EndpointSliceChurn_NoPrematureSleep is Task 7.2 (block 7+8 plan
@@ -164,7 +165,12 @@ func TestReconcile_SleepFlip_RunPredatesIdleDuration(t *testing.T) {
 	if err := k8sClient.Create(ctx, model); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dstackClient.Apply(ctx, dstack.ApplyRequest{Name: runNameIn(manualNamespace, name), Replicas: 1}); err != nil {
+	// A run created by squall <= v0.1.4: its STORED configuration carries no
+	// idle_duration key at all. It is seeded straight against the fake
+	// because dstackClient cannot mint one — the wake path always sends an
+	// explicit idle_duration (D166), which is exactly why the sleep flip has
+	// to be able to omit it again (D156).
+	if _, err := dstackFake.Apply(mock.ApplyRequest{Name: runNameIn(manualNamespace, name), Replicas: 1}); err != nil {
 		t.Fatal(err)
 	}
 	ip := nonLoopbackIP(t)
@@ -181,8 +187,10 @@ func TestReconcile_SleepFlip_RunPredatesIdleDuration(t *testing.T) {
 	spy.mu.Lock()
 	got := spy.lastApply
 	spy.mu.Unlock()
-	if got.IdleDuration != 0 {
-		t.Fatalf("sleep IdleDuration = %v, want 0 for pre-upgrade run", got.IdleDuration)
+	if got.IdleDuration != nil {
+		t.Fatalf("sleep IdleDuration = %v, want nil (no key at all) for a pre-upgrade run: "+
+			"dstack refuses an active run whose spec differs beyond replicas, and a refused "+
+			"sleep is never acted on, so the Model stays awake and bills (D156)", *got.IdleDuration)
 	}
 	updated := &squallv1alpha1.Model{}
 	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), updated); err != nil {

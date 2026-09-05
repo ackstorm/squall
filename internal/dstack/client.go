@@ -117,9 +117,18 @@ type ApplyRequest struct {
 	// Backends here means the eligibility table is not being enforced,
 	// which is the exact failure its own CRD comment warns about.
 	Placement Placement
-	// IdleDuration is the Model's fleet idle window, sent to dstack in whole
-	// seconds. Zero omits it; callers should use the required CRD value.
-	IdleDuration time.Duration
+	// IdleDuration is the run's idle window, sent to dstack in whole
+	// seconds. PRESENCE is meaningful independently of the value: a
+	// non-nil pointer to 0 sends an explicit `idle_duration: 0` (D166 — an
+	// absent key makes dstack apply its own 5m default), while nil omits
+	// the key entirely.
+	//
+	// Both are needed, by DIRECTION (D156): a wake always sends an explicit
+	// 0, and a sleep must reproduce the ACTIVE run's stored configuration
+	// exactly — including sending nothing at all for a run created before
+	// squall sent this field, because dstack refuses any spec difference
+	// beyond replicas on an active run.
+	IdleDuration *time.Duration
 	MaxDuration  time.Duration
 
 	// Current is the CAS anchor (F18). dstack's apply compares the ENTIRE
@@ -263,8 +272,15 @@ type Run struct {
 	// name is stable across a Model being deleted and recreated while the
 	// Kubernetes UID is not — so this is what tells "my run" apart from "a
 	// run left by a previous incarnation of a Model with the same name".
-	Env          map[string]string
-	IdleDuration time.Duration
+	Env map[string]string
+
+	// IdleDuration is the idle window dstack echoes off this run's STORED
+	// configuration, nil when the stored spec carries no idle_duration key
+	// at all (every run created by squall <= v0.1.4). The distinction is
+	// load-bearing, not cosmetic: the sleep flip re-sends this value
+	// verbatim, and re-sending 0 where the run stored nothing is an
+	// override dstack refuses — leaving the GPU awake and billing (D156).
+	IdleDuration *time.Duration
 	MaxDuration  time.Duration
 
 	// SSHKeyPub is the run's OWN key, echoed off run_spec. Read back so a

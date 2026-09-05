@@ -37,14 +37,17 @@ func TestUpdateActivityStatus_LastRequestAtNeverGoesBackwards(t *testing.T) {
 func TestApplyDurationsFor_DirectionAndHardStop(t *testing.T) {
 	onDemand := &squallv1alpha1.Model{Spec: squallv1alpha1.ModelSpec{MinReplicas: 0, HardStop: metav1.Duration{Duration: 24 * time.Hour}}}
 	pinned := &squallv1alpha1.Model{Spec: squallv1alpha1.ModelSpec{MinReplicas: 1, HardStop: metav1.Duration{Duration: 24 * time.Hour}}}
-	if idle, hard := applyDurationsFor(onDemand, Action{Replicas: 0, Current: &dstack.Run{Replicas: 1}}); idle != 0 || hard != 0 {
-		t.Fatalf("pre-upgrade sleep = %v/%v", idle, hard)
+	// A run that stored NO idle_duration must be slept with no key at all —
+	// nil, not a zero that dstack reads as a spec override (D156).
+	if idle, hard := applyDurationsFor(onDemand, Action{Replicas: 0, Current: &dstack.Run{Replicas: 1}}); idle != nil || hard != 0 {
+		t.Fatalf("pre-upgrade sleep = %v/%v, want nil/0", idle, hard)
 	}
-	if idle, hard := applyDurationsFor(onDemand, Action{Replicas: 0, Current: &dstack.Run{Replicas: 1, IdleDuration: 5 * time.Minute, MaxDuration: 12 * time.Hour}}); idle != 5*time.Minute || hard != 12*time.Hour {
+	stored := 5 * time.Minute
+	if idle, hard := applyDurationsFor(onDemand, Action{Replicas: 0, Current: &dstack.Run{Replicas: 1, IdleDuration: &stored, MaxDuration: 12 * time.Hour}}); idle == nil || *idle != 5*time.Minute || hard != 12*time.Hour {
 		t.Fatalf("stored sleep = %v/%v", idle, hard)
 	}
-	if idle, hard := applyDurationsFor(onDemand, Action{Replicas: 1, Current: &dstack.Run{Replicas: 0}}); idle != 0 || hard != 24*time.Hour {
-		t.Fatalf("wake = %v/%v", idle, hard)
+	if idle, hard := applyDurationsFor(onDemand, Action{Replicas: 1, Current: &dstack.Run{Replicas: 0}}); idle == nil || *idle != 0 || hard != 24*time.Hour {
+		t.Fatalf("wake = %v/%v, want an EXPLICIT 0 (an absent key is dstack's own 5m default)", idle, hard)
 	}
 	if _, hard := applyDurationsFor(pinned, Action{Replicas: 1}); hard != 0 {
 		t.Fatalf("pinned hard = %v", hard)
@@ -64,8 +67,8 @@ func TestApplyDurationsFor_AlwaysSendsZeroIdle(t *testing.T) {
 		},
 	}
 	idle, hard := applyDurationsFor(model, Action{Replicas: 1})
-	if idle != 0 {
-		t.Errorf("idle = %s, want 0: squall never asks dstack to hold a machine idle", idle)
+	if idle == nil || *idle != 0 {
+		t.Errorf("idle = %v, want an explicit 0: squall never asks dstack to hold a machine idle", idle)
 	}
 	if hard != 2*time.Hour {
 		t.Errorf("hard = %s, want 2h: hardStop must be unaffected by the idle change", hard)

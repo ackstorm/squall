@@ -17,6 +17,11 @@ import (
 	"github.com/ackstorm/squall/internal/dstack/mock"
 )
 
+// secs is a *time.Duration literal helper: an ApplyRequest distinguishes
+// "send this value" from "send no idle_duration key at all" (D156), so
+// every test that means the former has to say so explicitly.
+func secs(d time.Duration) *time.Duration { return &d }
+
 func TestHTTPClient_Apply_SendsIdleDuration(t *testing.T) {
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +34,7 @@ func TestHTTPClient_Apply_SendsIdleDuration(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
-	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{Name: "qwen", Replicas: 1, Image: "img", Port: 8080, IdleDuration: 10 * time.Minute}); err != nil {
+	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{Name: "qwen", Replicas: 1, Image: "img", Port: 8080, IdleDuration: secs(10 * time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
 	cfg := body["run_spec"].(map[string]any)["configuration"].(map[string]any)
@@ -38,28 +43,38 @@ func TestHTTPClient_Apply_SendsIdleDuration(t *testing.T) {
 	}
 }
 
-// TestHTTPClient_Apply_SendsIdleDurationWhenZero used to be
-// TestHTTPClient_Apply_OmitsIdleDurationWhenZero: before D166 an absent key
-// meant "apply dstack's own default", which is exactly the footgun this
-// change removes. A Go zero must now reach the wire as an explicit 0.
-func TestHTTPClient_Apply_SendsIdleDurationWhenZero(t *testing.T) {
-	var body map[string]any
+// TestHTTPClient_Apply_SleepOmitsAbsentIdleDuration is D156's encoding
+// guard, the mirror image of the explicit-zero one below. A run created by
+// squall <= v0.1.4 stored NO idle_duration key; the sleep flip re-sends
+// that run's stored configuration, and dstack refuses an active run whose
+// submitted spec differs from the stored one in anything beyond replicas —
+// so an added `idle_duration: 0` wedges the flip and the GPU bills on.
+// A nil IdleDuration must therefore reach the wire as nothing at all.
+//
+// The assertion is on raw bytes: unmarshalling into a struct cannot tell
+// "sent 0" from "sent nothing", which is the whole distinction under test.
+func TestHTTPClient_Apply_SleepOmitsAbsentIdleDuration(t *testing.T) {
+	var planBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == getPlanPath {
-			_ = json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case getPlanPath:
+			planBody, _ = io.ReadAll(r.Body)
 			_, _ = w.Write([]byte(`{"run_spec":{},"current_resource":null,"action":"create"}`))
-			return
+		case applyPath:
+			_, _ = w.Write([]byte(`{"id":"abc","jobs":[],"run_spec":{"configuration":{"replicas":{"min":0,"max":0}}}}`))
 		}
-		_, _ = w.Write([]byte(`{"id":"abc","jobs":[],"run_spec":{"configuration":{"replicas":{"min":1,"max":1}}}}`))
 	}))
 	t.Cleanup(srv.Close)
 	c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
-	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{Name: "qwen", Replicas: 1, Image: "img", Port: 8080}); err != nil {
+	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{
+		Name: "qwen", Replicas: 0, Image: "img", Port: 8080, IdleDuration: nil,
+	}); err != nil {
 		t.Fatal(err)
 	}
-	cfg := body["run_spec"].(map[string]any)["configuration"].(map[string]any)
-	if cfg["idle_duration"] != float64(0) {
-		t.Fatalf("idle_duration = %v, want 0", cfg["idle_duration"])
+	if bytes.Contains(planBody, []byte(`"idle_duration"`)) {
+		t.Fatalf("sleep plan body carries an idle_duration the stored run never had.\n"+
+			"dstack answers 400 \"Cannot override active run\" and the Model stays awake (D156).\nbody = %s", planBody)
 	}
 }
 
@@ -85,7 +100,7 @@ func TestHTTPClient_Apply_SendsExplicitIdleDurationZero(t *testing.T) {
 
 	c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
 	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{
-		Name: "qwen", Replicas: 1, Image: "img", Port: 8080, IdleDuration: 0,
+		Name: "qwen", Replicas: 1, Image: "img", Port: 8080, IdleDuration: secs(0),
 	}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -179,10 +194,12 @@ const fleetGetPath = "/api/project/main/fleets/get"
 func TestHTTPClient_Get_DecodesStoredIdleDuration(t *testing.T) {
 	for _, tc := range []struct {
 		name, echo string
-		want       time.Duration
+		want       *time.Duration
 	}{
-		{"stored value", `600`, 10 * time.Minute},
-		{"pre-upgrade run stores none", `null`, 0},
+		{"stored value", `600`, secs(10 * time.Minute)},
+		// nil, NOT zero: the sleep flip re-sends whatever this decodes to,
+		// and zero would put a key on the wire the stored run never had.
+		{"pre-upgrade run stores none", `null`, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -195,8 +212,11 @@ func TestHTTPClient_Get_DecodesStoredIdleDuration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Get: %v", err)
 			}
-			if run.IdleDuration != tc.want {
-				t.Fatalf("IdleDuration = %v, want %v", run.IdleDuration, tc.want)
+			switch {
+			case tc.want == nil && run.IdleDuration != nil:
+				t.Fatalf("IdleDuration = %v, want nil (absent key)", *run.IdleDuration)
+			case tc.want != nil && (run.IdleDuration == nil || *run.IdleDuration != *tc.want):
+				t.Fatalf("IdleDuration = %v, want %v", run.IdleDuration, *tc.want)
 			}
 		})
 	}

@@ -469,3 +469,44 @@ func TestStop_IsIdempotentAndReportsAbsence(t *testing.T) {
 		t.Fatalf("Stop on an unknown run = %v, want ErrNotFound", err)
 	}
 }
+
+// TestApply_ActiveRunRefusesAnAddedIdleDuration models D156's three
+// MEASURED legs against dstack 0.21.2. (A) a run created with no
+// idle_duration; (B) flipping it to 0 replicas with the spec otherwise
+// identical is ACCEPTED; (C) the same flip with idle_duration newly added
+// is REFUSED. Leg C is a money bug, not an inconvenience: a refused sleep
+// is deliberately never acted on, so the GPU stays awake and bills.
+func TestApply_ActiveRunRefusesAnAddedIdleDuration(t *testing.T) {
+	zero := 0
+	s := New()
+	created := s.MustApply(t, ApplyRequest{Name: "qwen", Replicas: 1}) // (A)
+	if created.IdleDuration != nil {
+		t.Fatalf("IdleDuration = %v, want nil: a run applied without one stores none", *created.IdleDuration)
+	}
+
+	if _, err := s.Apply(ApplyRequest{Name: "qwen", Replicas: 0, Current: created}); err != nil { // (B)
+		t.Fatalf("identical sleep flip = %v, want accepted", err)
+	}
+
+	woken := s.MustApply(t, ApplyRequest{Name: "qwen", Replicas: 1, Current: mustGet(t, s, "qwen"), IdleDuration: &zero})
+	if _, err := s.Apply(ApplyRequest{Name: "qwen", Replicas: 0, Current: woken, IdleDuration: &zero}); err != nil {
+		t.Fatalf("sleep re-sending the stored idle_duration = %v, want accepted", err)
+	}
+	if _, err := s.Apply(ApplyRequest{Name: "qwen", Replicas: 1, Current: mustGet(t, s, "qwen")}); err != nil {
+		t.Fatalf("wake dropping idle_duration from an ASLEEP run = %v: only an ACTIVE run refuses (D156 measured legs)", err)
+	}
+
+	awake := mustGet(t, s, "qwen")
+	if _, err := s.Apply(ApplyRequest{Name: "qwen", Replicas: 0, Current: awake, IdleDuration: &zero}); !errors.Is(err, ErrCannotOverride) { // (C)
+		t.Fatalf("sleep flip that ADDS idle_duration = %v, want ErrCannotOverride", err)
+	}
+}
+
+func mustGet(t *testing.T, s *Server, name string) *Run {
+	t.Helper()
+	run, err := s.Get(name)
+	if err != nil {
+		t.Fatalf("Get(%q): %v", name, err)
+	}
+	return run
+}

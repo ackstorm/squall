@@ -124,6 +124,28 @@ func dstackSeconds(d time.Duration) *int {
 	return &s
 }
 
+// dstackSecondsPtr renders an OPTIONAL duration: nil in, nil out — the key
+// is omitted entirely — and any non-nil value goes out explicitly, zero
+// included. Absence and an explicit 0 are DIFFERENT specs to dstack, and
+// only the caller knows which one this run needs (D156).
+func dstackSecondsPtr(d *time.Duration) *int {
+	if d == nil {
+		return nil
+	}
+	return dstackSeconds(*d)
+}
+
+// wireSecondsPtr is dstackSecondsPtr's inverse: an absent key decodes to
+// nil, not to zero, so a run that stored no idle_duration is never
+// mistaken for one that stored 0.
+func wireSecondsPtr(v *int) *time.Duration {
+	if v == nil {
+		return nil
+	}
+	d := time.Duration(*v) * time.Second
+	return &d
+}
+
 func wireSeconds(v *int) time.Duration {
 	if v == nil {
 		return 0

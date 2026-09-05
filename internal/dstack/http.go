@@ -268,7 +268,7 @@ func runSpec(req ApplyRequest) runSpecWire {
 			Backends:     req.Placement.Backends,
 			Regions:      req.Placement.Regions,
 			MaxPrice:     req.Placement.MaxPrice,
-			IdleDuration: dstackSeconds(req.IdleDuration),
+			IdleDuration: dstackSecondsPtr(req.IdleDuration),
 			MaxDuration:  dstackDuration(req.MaxDuration),
 		},
 	}
@@ -350,7 +350,7 @@ func decodeRun(body []byte) (*Run, error) {
 		ProbesReady:         probesReady(w.Jobs, w.DeploymentNum, echoedReadyAfter(w)),
 		Env:                 w.RunSpec.Configuration.Env,
 		SSHKeyPub:           w.RunSpec.SSHKeyPub,
-		IdleDuration:        wireSeconds(w.RunSpec.Configuration.IdleDuration),
+		IdleDuration:        wireSecondsPtr(w.RunSpec.Configuration.IdleDuration),
 		MaxDuration:         wireSeconds(w.RunSpec.Configuration.MaxDuration),
 		Status:              w.Status,
 		SubmittedAt:         w.SubmittedAt,

@@ -805,16 +805,27 @@ func (r *ModelReconciler) applyEnvFor(ctx context.Context, model *squallv1alpha1
 	return withModelUID(nil, model), "", nil
 }
 
-func applyDurationsFor(model *squallv1alpha1.Model, action Action) (idle, hard time.Duration) {
+// applyDurationsFor splits the two duration fields by DIRECTION, the rule
+// D156 left behind: on the SLEEP flip squall reproduces the active run's
+// stored configuration verbatim — value AND presence, so a run created
+// before squall sent idle_duration is flipped with no idle_duration key at
+// all. Re-sending an explicit 0 there is a spec difference beyond replicas,
+// dstack answers 400 "Cannot override active run", and because a refused
+// sleep is deliberately never acted on (1->0 fails safe) the Model stays
+// awake and bills forever.
+func applyDurationsFor(model *squallv1alpha1.Model, action Action) (idle *time.Duration, hard time.Duration) {
 	if action.Replicas == 0 && action.Current != nil {
 		return action.Current.IdleDuration, action.Current.MaxDuration
 	}
-	// Always zero. dstack's fleet idle window is a second idle window that
-	// bills exactly like the first one and buys strictly less: it keeps the
-	// machine but drops the weights, so a wake inside it still reloads. The
-	// whole budget belongs in idleTimeout, which the controller gates on
-	// in-flight evidence. See the single-idle-window design.
-	idle = 0
+	// Always an EXPLICIT zero on the wake path. dstack's fleet idle window
+	// is a second idle window that bills exactly like the first one and buys
+	// strictly less: it keeps the machine but drops the weights, so a wake
+	// inside it still reloads. The whole budget belongs in idleTimeout,
+	// which the controller gates on in-flight evidence. Explicit because an
+	// ABSENT key is dstack's own 5m default, not zero (D166). See the
+	// single-idle-window design.
+	zero := time.Duration(0)
+	idle = &zero
 	if model.Spec.MinReplicas == 0 {
 		hard = model.Spec.HardStop.Duration
 	}
