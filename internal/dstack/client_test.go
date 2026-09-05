@@ -77,7 +77,7 @@ func TestHTTPClient_Apply_SendsExplicitIdleDurationZero(t *testing.T) {
 		case getPlanPath:
 			planBody, _ = io.ReadAll(r.Body)
 			_, _ = w.Write([]byte(`{"run_spec":{},"current_resource":null,"action":"create"}`))
-		case "/api/project/main/runs/apply":
+		case applyPath:
 			_, _ = w.Write([]byte(`{"id":"abc","jobs":[],"run_spec":{"configuration":{"replicas":{"min":1,"max":1}}}}`))
 		}
 	}))
@@ -173,6 +173,7 @@ func TestHTTPClient_Apply_OmitsMaxDurationWhenZero(t *testing.T) {
 }
 
 const getPlanPath = "/api/project/main/runs/get_plan"
+const applyPath = "/api/project/main/runs/apply"
 const fleetGetPath = "/api/project/main/fleets/get"
 
 func TestHTTPClient_Get_DecodesStoredIdleDuration(t *testing.T) {
@@ -214,7 +215,7 @@ func TestHTTPClient_Apply_IsTwoStepAndNeverForces(t *testing.T) {
 			sawPlan = true
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"run_spec":{"run_name":"qwen","configuration":{"replicas":{"min":1,"max":1}}},"current_resource":null,"action":"create"}`))
-		case "/api/project/main/runs/apply":
+		case applyPath:
 			sawApply = true
 			if err := json.NewDecoder(r.Body).Decode(&applyBody); err != nil {
 				t.Errorf("decode apply body: %v", err)
@@ -269,7 +270,7 @@ func TestHTTPClient_Apply_RoundTripsCurrentResourceVerbatim(t *testing.T) {
 		case getPlanPath:
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"run_spec":{},"current_resource":null,"action":"update"}`))
-		case "/api/project/main/runs/apply":
+		case applyPath:
 			var body struct {
 				Plan struct {
 					CurrentResource json.RawMessage `json:"current_resource"`
