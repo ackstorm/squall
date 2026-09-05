@@ -13,13 +13,21 @@ request arrives, serves OpenAI-compatible traffic from it, and gives the machine
 the traffic stops. Between requests, there is nothing to pay for.
 
 If you know [KubeAI](https://github.com/kubeai-project/kubeai): **squall is that idea for
-capacity that is not in your cluster.** KubeAI scales model Pods to zero on GPU nodes you
-already have. Squall scales *machines* to zero, renting them on demand through
-[dstack](https://github.com/dstackai/dstack) from Vast.ai, AWS or DigitalOcean. Kubernetes
+capacity that is not in your cluster.** KubeAI also scales models to zero, and paired with a
+cluster autoscaler it can grow GPU nodes on demand — but the capacity always comes from the
+same cluster, so it is bounded by that cluster's region and quota. Squall scales *machines* to
+zero and rents them through [dstack](https://github.com/dstackai/dstack) from Vast.ai, AWS or
+DigitalOcean. The GPU need not be where the cluster is: on AWS it can run in a region your
+cluster has no presence in, which is often the only region with the card you want. Kubernetes
 holds the intent and does the coordinating; no Kubernetes runs on the serving hardware.
 
-Models are reached through [LiteLLM](https://github.com/BerriAI/litellm), which stays
-vanilla — squall registers nothing and patches nothing.
+In shape, squall is a **Kubernetes operator for [dstack](https://github.com/dstackai/dstack)**:
+the `Model` CR carries the intent and the lifecycle, dstack owns every provider integration.
+Squall keeps no list of supported clouds, so any backend dstack speaks is one squall can
+place on.
+
+Callers see a plain OpenAI-compatible endpoint, so anything that already speaks that API
+reaches a squall-backed model unchanged.
 
 ## Highlights
 
@@ -27,7 +35,7 @@ vanilla — squall registers nothing and patches nothing.
 
 🔌 **Zero idle cost** — no request, no machine, no bill
 ⏱️ **Wake on first request** — the request is held, not rejected, while the GPU comes up
-🌍 **Capacity anywhere** — Vast.ai, AWS, DigitalOcean, or an in-cluster Kubernetes backend
+🌍 **Capacity anywhere** — any backend dstack supports, in regions your cluster does not run in
 📄 **Declared in Git** — a `Model` CR, reconciled like everything else on the platform
 🔗 **OpenAI-compatible** — `/v1/chat/completions`, `/v1/completions`, `/v1/models`
 🛡️ **Safe by construction** — a wrong wake costs money, a wrong sleep kills a generation, and
@@ -77,8 +85,7 @@ A crash-looping proxy cannot strand a GPU, and a controller under load cannot dr
 
 ```mermaid
 flowchart LR
-    client["OpenAI client"] --> litellm["LiteLLM"]
-    litellm --> proxy["squall-proxy"]
+    client["OpenAI client"] --> proxy["squall-proxy"]
     proxy -- "1 · records demand" --> model[("Model CR")]
     model --> ctrl["squall-controller"]
     ctrl -- "2 · replicas 0 → 1" --> dstack["dstack server"]
@@ -100,8 +107,8 @@ silent hang and never a lie.
 
 Idle works in reverse: once nothing is in flight and the newest request is older than
 `scaleDownDelaySeconds`, the run goes to zero replicas; the machine is then released by
-dstack — immediately on Vast.ai, Kubernetes and RunPod, or after `fleet.idleDuration` on VM
-backends that keep a warm pool. See [Send it a request](#send-it-a-request) for why that
+dstack — immediately on Vast.ai, Kubernetes, RunPod and Slurm, or after `fleet.idleDuration`
+on VM backends that keep a warm pool. See [Send it a request](#send-it-a-request) for why that
 distinction decides your `holdTimeout`.
 
 ## Quickstart
@@ -170,6 +177,32 @@ Create `vast-credentials` in the chart namespace with a `VAST_API_KEY` key. The 
 imports that Secret as environment variables and replaces `${VAST_API_KEY}` in the
 backend config before dstack starts; the credential does not belong in `values.yaml`.
 
+### Which backends
+
+There is no allow-list to be on. `dstack.backends` reaches dstack's own `server/config.yml`
+verbatim and `spec.placement.backends` is an unconstrained list of names, so **any backend
+dstack supports is usable from a `Model`**. Bringing up a new provider is a credentials and
+measurement exercise, not a change to squall.
+
+dstack 0.21.3 ships `aws`, `azure`, `gcp`, `oci`, `nebius`, `lambda`, `vastai`, `runpod`,
+`digitalocean`, `amddevcloud`, `vultr`, `cloudrift`, `crusoe`, `datacrunch`, `hotaisle`,
+`jarvislabs`, `seeweb`, `verda`, `slurm`, `kubernetes` and dstack Sky.
+
+One property of a backend does change squall's behaviour — dstack's internal `dockerized`
+flag, which decides whether a released machine is kept warm:
+
+| `dockerized` | Backends | Consequence |
+|---|---|---|
+| `false` | `vastai`, `kubernetes`, `runpod`, `slurm` | No warm pool. `fleet.idleDuration` is never read, so every wake is a full cold provision and `holdTimeout` must cover one. |
+| `true` | everything else | `fleet.idleDuration` binds, and a second wake inside that window is fast. |
+
+Squall carries that table and computes the warm window per backend, warning when
+`holdTimeout` exceeds it. One non-dockerized backend in `placement.backends` is enough to
+make the whole placement cold, because dstack is free to put the wake there.
+
+**Only `vastai` and `kubernetes` have been run end to end.** The rest are untested rather
+than unsupported — worth knowing which of the two you are dealing with when something fails.
+
 > **Helm never upgrades CRDs.** Files under a chart's `crds/` directory are applied on
 > install and ignored on every upgrade. After a version bump, apply the CRD yourself — it
 > ships as a release asset:
@@ -187,7 +220,7 @@ metadata:
   namespace: squall-system       # any namespace works; this one already exists
 spec:
   engine: ollama
-  image: ollama/ollama@sha256:c622a7adec67cf5bd7fe1802b7e26aa583a955a54e91d132889301f50c3e0bd0
+  image: ollama/ollama:latest    # a tag is fine to try it; pin a digest for real use
   model: qwen2.5:0.5b
   features: [TextGeneration]
 
@@ -249,16 +282,17 @@ Leave it alone and the machine goes away.
 
 **How long that takes depends on the backend, and `fleet.idleDuration` is not always part of
 the answer.** dstack only honours an idle window where its internal `dockerized` flag is true.
-On **Vast.ai, Kubernetes and RunPod** it is false: dstack forces the window to zero and never
-reads your value, so the machine is released on the first pass after the job stops. Measured
+On **Vast.ai, Kubernetes, RunPod and Slurm** it is false: dstack forces the window to zero
+and never reads your value, so the machine is released on the first pass after the job stops.
+Measured
 on Vast.ai — instance gone **45 seconds** after sleep, against a declared `idleDuration: 30m`.
 
 The consequence is not the teardown, it is the wake. There is **no warm pool** on those
 backends, so every wake is a full cold provision and `holdTimeout` has to cover one. Two
 rules follow:
 
-- On Vast.ai/Kubernetes/RunPod the warm window is `scaleDownDelaySeconds` **alone**. Squall
-  warns when `holdTimeout` exceeds it, and it does the arithmetic per backend.
+- On Vast.ai/Kubernetes/RunPod/Slurm the warm window is `scaleDownDelaySeconds` **alone**.
+  Squall warns when `holdTimeout` exceeds it, and it does the arithmetic per backend.
 - On VM backends such as AWS, `fleet.idleDuration` binds and a second wake inside the window
   is fast.
 
