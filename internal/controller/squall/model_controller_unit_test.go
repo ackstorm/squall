@@ -43,11 +43,33 @@ func TestApplyDurationsFor_DirectionAndHardStop(t *testing.T) {
 	if idle, hard := applyDurationsFor(onDemand, Action{Replicas: 0, Current: &dstack.Run{Replicas: 1, IdleDuration: 5 * time.Minute, MaxDuration: 12 * time.Hour}}); idle != 5*time.Minute || hard != 12*time.Hour {
 		t.Fatalf("stored sleep = %v/%v", idle, hard)
 	}
-	if idle, hard := applyDurationsFor(onDemand, Action{Replicas: 1, Current: &dstack.Run{Replicas: 0}}); idle != 10*time.Minute || hard != 24*time.Hour {
+	if idle, hard := applyDurationsFor(onDemand, Action{Replicas: 1, Current: &dstack.Run{Replicas: 0}}); idle != 0 || hard != 24*time.Hour {
 		t.Fatalf("wake = %v/%v", idle, hard)
 	}
 	if _, hard := applyDurationsFor(pinned, Action{Replicas: 1}); hard != 0 {
 		t.Fatalf("pinned hard = %v", hard)
+	}
+}
+
+// TestApplyDurationsFor_AlwaysSendsZeroIdle is the single-idle-window
+// invariant at the controller boundary: squall keeps no warm pool on any
+// backend, so the fleet idle window it asks dstack for is always zero and
+// the whole budget lives in idleTimeout. A non-zero here would buy a
+// second, strictly worse idle window at the same hourly price.
+func TestApplyDurationsFor_AlwaysSendsZeroIdle(t *testing.T) {
+	model := &squallv1alpha1.Model{
+		Spec: squallv1alpha1.ModelSpec{
+			MinReplicas: 0,
+			HardStop:    metav1.Duration{Duration: 2 * time.Hour},
+			Fleet:       squallv1alpha1.ModelFleet{IdleDuration: metav1.Duration{Duration: 10 * time.Minute}},
+		},
+	}
+	idle, hard := applyDurationsFor(model, Action{Replicas: 1})
+	if idle != 0 {
+		t.Errorf("idle = %s, want 0: squall never asks dstack to hold a machine idle", idle)
+	}
+	if hard != 2*time.Hour {
+		t.Errorf("hard = %s, want 2h: hardStop must be unaffected by the idle change", hard)
 	}
 }
 

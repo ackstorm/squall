@@ -809,7 +809,12 @@ func applyDurationsFor(model *squallv1alpha1.Model, action Action) (idle, hard t
 	if action.Replicas == 0 && action.Current != nil {
 		return action.Current.IdleDuration, action.Current.MaxDuration
 	}
-	idle = model.Spec.Fleet.IdleDuration.Duration
+	// Always zero. dstack's fleet idle window is a second idle window that
+	// bills exactly like the first one and buys strictly less: it keeps the
+	// machine but drops the weights, so a wake inside it still reloads. The
+	// whole budget belongs in idleTimeout, which the controller gates on
+	// in-flight evidence. See the single-idle-window design.
+	idle = 0
 	if model.Spec.MinReplicas == 0 {
 		hard = model.Spec.HardStop.Duration
 	}
@@ -898,7 +903,7 @@ func (r *ModelReconciler) checkSchedulable(ctx context.Context, model *squallv1a
 	// comment). This is diagnosis, NOT a veto: 0->1 fails open, so a
 	// preflight that could not run, or that ran clean, never blocks
 	// the Apply below.
-	if reason, msg, fleets := preflight(ctx, r.DstackClient, enginePlacement(model.Spec.Placement).Backends, model.Spec.Fleet.IdleDuration.Duration); reason != "" {
+	if reason, msg, fleets := preflight(ctx, r.DstackClient, enginePlacement(model.Spec.Placement).Backends); reason != "" {
 		if fleets != nil {
 			model.Status.Fleet = fleets
 		}
