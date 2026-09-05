@@ -209,6 +209,7 @@ func TestValidate_WarmWindowIgnoresIdleDurationWhereItIsInert(t *testing.T) {
 		{"vastai keeps no warm pool", []string{"vastai"}, true},
 		{"kubernetes keeps no warm pool", []string{"kubernetes"}, true},
 		{"runpod keeps no warm pool", []string{"runpod"}, true},
+		{"slurm keeps no warm pool", []string{"slurm"}, true},
 		{"aws is dockerized, idleDuration counts", []string{"aws"}, false},
 		{"one cold backend is enough to make the wake cold", []string{"aws", "vastai"}, true},
 	} {

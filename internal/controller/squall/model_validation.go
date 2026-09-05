@@ -83,10 +83,20 @@ func ValidateWithWarnings(spec squallv1alpha1.ModelSpec) ([]string, error) {
 // so on these backends a fleet keeps no warm instance and every wake is a
 // full cold provision. Source-verified against dstack a70d98b, then
 // measured on both Vast.ai and Kubernetes.
+//
+// This is the COMPLETE set as of dstack 0.21.3: every other backend that
+// ships a compute module constructs its JobProvisioningData with
+// dockerized=True. Re-derive it on a dstack bump with
+//
+//	grep -ro 'dockerized=[A-Za-z]*' src/dstack/_internal/core/backends
+//
+// rather than guessing — a backend missing from this map is told its warm
+// window includes an idleDuration that dstack will never read.
 var nonDockerizedBackends = map[string]struct{}{
 	"vastai":     {},
 	"kubernetes": {},
 	"runpod":     {},
+	"slurm":      {},
 }
 
 // backendsHoldAWarmPool reports whether fleet.idleDuration can contribute
