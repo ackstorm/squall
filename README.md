@@ -106,10 +106,10 @@ When the hold deadline expires before the GPU is ready, the caller gets `503` wi
 silent hang and never a lie.
 
 Idle works in reverse: once nothing is in flight and the newest request is older than
-`scaleDownDelaySeconds`, the run goes to zero replicas; the machine is then released by
-dstack — immediately on Vast.ai, Kubernetes, RunPod and Slurm, or after `fleet.idleDuration`
-on VM backends that keep a warm pool. See [Send it a request](#send-it-a-request) for why that
-distinction decides your `holdTimeout`.
+`idleTimeout`, the run goes to zero replicas — and squall always tells dstack
+`idle_duration: 0`, so the machine goes with it, on every backend. There is no warm pool
+anywhere: idle releases both layers at once, and the next wake is always a full cold start.
+See [Send it a request](#send-it-a-request) for why that decides your `holdTimeout`.
 
 ## Quickstart
 
@@ -188,17 +188,10 @@ dstack 0.21.3 ships `aws`, `azure`, `gcp`, `oci`, `nebius`, `lambda`, `vastai`, 
 `digitalocean`, `amddevcloud`, `vultr`, `cloudrift`, `crusoe`, `datacrunch`, `hotaisle`,
 `jarvislabs`, `seeweb`, `verda`, `slurm`, `kubernetes` and dstack Sky.
 
-One property of a backend does change squall's behaviour — dstack's internal `dockerized`
-flag, which decides whether a released machine is kept warm:
-
-| `dockerized` | Backends | Consequence |
-|---|---|---|
-| `false` | `vastai`, `kubernetes`, `runpod`, `slurm` | No warm pool. `fleet.idleDuration` is never read, so every wake is a full cold provision and `holdTimeout` must cover one. |
-| `true` | everything else | `fleet.idleDuration` binds, and a second wake inside that window is fast. |
-
-Squall carries that table and computes the warm window per backend, warning when
-`holdTimeout` exceeds it. One non-dockerized backend in `placement.backends` is enough to
-make the whole placement cold, because dstack is free to put the wake there.
+No property of a backend changes squall's behaviour here: squall always tells dstack
+`idle_duration: 0`, so there is no warm pool on any backend, dockerized or not, and every
+wake is a full cold provision. `holdTimeout` must cover one regardless of which backend a
+`Model` lands on.
 
 **Only `vastai` and `kubernetes` have been run end to end.** The rest are untested rather
 than unsupported — worth knowing which of the two you are dealing with when something fails.
@@ -226,7 +219,7 @@ spec:
 
   minReplicas: 0                 # 0 = sleeps when idle; 1 = always on
   holdTimeout: 10m               # how long a request waits for a cold start
-  scaleDownDelaySeconds: 600     # idle window before the run drops to zero replicas
+  idleTimeout: 10m               # idle window before the run — and the machine — release
   provisioningTimeout: 20m       # a wake that never becomes Ready is destroyed
   drainTimeout: 30s
   maxLifetime: 4h
@@ -242,10 +235,6 @@ spec:
     backends: [vastai]           # only backends named here AND in the chart are eligible
     regions: [es-spain, fr-france, nl-netherlands] # narrower than operator policy
     maxPricePerHour: "0.80"      # quoted — an unquoted float fails CRD validation
-
-  fleet:
-    idleDuration: 2m             # how long the machine survives with no run on it —
-                                 # but see below: INERT on Vast.ai and Kubernetes
 
   health:
     unhealthyAfter: 2m           # takes traffic, delivers no 2xx → torn down
@@ -280,21 +269,15 @@ kubectl -n squall-system logs -f deploy/squall-proxy
 
 Leave it alone and the machine goes away.
 
-**How long that takes depends on the backend, and `fleet.idleDuration` is not always part of
-the answer.** dstack only honours an idle window where its internal `dockerized` flag is true.
-On **Vast.ai, Kubernetes, RunPod and Slurm** it is false: dstack forces the window to zero
-and never reads your value, so the machine is released on the first pass after the job stops.
-Measured
-on Vast.ai — instance gone **45 seconds** after sleep, against a declared `idleDuration: 30m`.
+**How long that takes does not depend on the backend.** Squall always tells dstack
+`idle_duration: 0`, so the machine is released the moment the run does, on every backend —
+there is no knob left that changes this. Measured on Vast.ai: instance gone **45 seconds**
+after sleep.
 
-The consequence is not the teardown, it is the wake. There is **no warm pool** on those
-backends, so every wake is a full cold provision and `holdTimeout` has to cover one. Two
-rules follow:
-
-- On Vast.ai/Kubernetes/RunPod/Slurm the warm window is `scaleDownDelaySeconds` **alone**.
-  Squall warns when `holdTimeout` exceeds it, and it does the arithmetic per backend.
-- On VM backends such as AWS, `fleet.idleDuration` binds and a second wake inside the window
-  is fast.
+The consequence is not the teardown, it is the wake. There is **no warm pool anywhere**, so
+every wake is a full cold provision and `holdTimeout` has to cover one — a `holdTimeout`
+short enough to habitually time out before a cold start finishes is a misconfiguration in all
+but intent, and squall warns when it looks that short relative to `provisioningTimeout`.
 
 ### Point LiteLLM at it
 
@@ -347,8 +330,8 @@ spec:
   placement:
     backends: [vastai]
     maxPricePerHour: "2.20"
-  holdTimeout: 20m               # must cover a full cold start — no warm pool on Vast
-  scaleDownDelaySeconds: 300
+  holdTimeout: 20m               # must cover a full cold start — no warm pool anywhere
+  idleTimeout: 5m
 ```
 
 ### Qwen3-8B — the cheap one, for checking the lifecycle costs nothing
@@ -390,10 +373,8 @@ spec:
 
   minReplicas: 0
   holdTimeout: 20m               # cold start measured at 9m53s — leave room
-  scaleDownDelaySeconds: 300
+  idleTimeout: 5m
   provisioningTimeout: 30m
-  fleet:
-    idleDuration: 10m            # inert on Vast.ai; kept for portability to VM backends
 ```
 
 > **Pin the multi-arch index digest, not a per-architecture one.** A `@sha256:` digest can

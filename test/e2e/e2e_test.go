@@ -48,7 +48,7 @@ const (
 // timing assertions start from a clock it controls rather than from
 // whenever `cluster-hydrate` last ran. Timers here are compressed further
 // still (single-digit seconds throughout) to keep the full
-// wake -> idle -> sleep -> fleet-idle-window loop inside about 20s.
+// wake -> idle -> sleep loop inside about 20s.
 const loopModelYAML = `
 apiVersion: squall.ackstorm.ai/v1alpha1
 kind: Model
@@ -72,9 +72,7 @@ spec:
     maxPricePerHour: "0.80"
   minReplicas: 0
   holdTimeout: 5s
-  scaleDownDelaySeconds: 2
-  fleet:
-    idleDuration: 4s
+  idleTimeout: 2s
   drainTimeout: 10s
   provisioningTimeout: 5m
   maxLifetime: 168h
@@ -256,7 +254,7 @@ var _ = Describe("Model lifecycle (Task 11.3)", Ordered, func() {
 		By("driving one more request through so the activity tracker records this Model idle")
 		sendChatRequests(proxyAddr, loopModelName, 1)
 
-		// scaleDownDelaySeconds: 2s in loopModelYAML — give the
+		// idleTimeout: 2s in loopModelYAML — give the
 		// reconciler (SQUALL_IDLE_REQUEUE_INTERVAL, see
 		// 02-operator/controller-patch.yaml) comfortably longer than
 		// that to notice.
@@ -273,27 +271,13 @@ var _ = Describe("Model lifecycle (Task 11.3)", Ordered, func() {
 			"the sleep flip's dstack Apply must CAS forward from the observed deploymentNum")
 	})
 
-	It("stays Asleep on the same run past the fleet's idle window", func() {
-		// fleet.idleDuration: 4s in loopModelYAML. fake-dstack's own
-		// ticker (cmd/fake-dstack/main.go) advances real wall-clock time
-		// and releases the underlying fleet instance once idleSince ages
-		// past idleDuration (internal/dstack/mock's F21) — but that
-		// release is intentionally invisible on the wire: neither
-		// dstack.Client.Get's Run nor this CRD's status expose
-		// instanceUp (see internal/dstack/mock/mock.go's InstanceCount, a
-		// direct-call-only accessor already covered by that package's own
-		// unit tests via SetClock+Tick). Adding an HTTP route to surface
-		// it here would diverge the fake from dstack's real (frozen) wire
-		// shape for a black-box check the mock's own tests already make.
-		// What this suite can and does assert is that the release is
-		// inert from the controller's point of view: no spurious
-		// re-Apply, same run, still Asleep.
-		time.Sleep(6 * time.Second)
-
-		st := getModelStatus(Default, loopModelName)
-		Expect(st.Phase).To(Equal("Asleep"))
-		Expect(st.RunID).To(Equal(wakeRunID))
-	})
+	// There used to be a fourth spec here, "stays Asleep on the same run past
+	// the fleet's idle window": spec.fleet and its idleDuration are gone
+	// (docs/plans/2026-09-05-single-idle-window-design.md). Squall now
+	// always tells dstack idle_duration: 0 for both runs and fleets, so
+	// there is no second, later timer releasing the machine after the job
+	// already went idle — idleTimeout above is the only window, and it
+	// covers both. Nothing past "flips back to Asleep" remains to assert.
 })
 
 // Model forwarding proves squall-proxy's other half of the data path: a

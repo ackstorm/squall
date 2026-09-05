@@ -57,9 +57,7 @@ spec:
     maxPricePerHour: "0.80" # unquoted floats fail CRD validation (anyOf: int|string); quoted per resource.Quantity
   minReplicas: 0
   holdTimeout: 8s
-  scaleDownDelaySeconds: 2
-  fleet:
-    idleDuration: 6s
+  idleTimeout: 2s
   drainTimeout: 10s
   provisioningTimeout: 5m
   maxLifetime: 168h

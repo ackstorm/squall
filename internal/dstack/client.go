@@ -345,8 +345,9 @@ type Client interface {
 	// ErrNotFound for a run that is already gone.
 	Stop(ctx context.Context, name string) error
 	// Delete removes the run. It only succeeds on a TERMINAL run — see
-	// Stop. Fleet instance release is dstack's own job via
-	// fleet.idleDuration (F21); Delete does not and must not model that.
+	// Stop. Fleet instance release is dstack's own job via its fleet-level
+	// idle_duration (F21, always sent as 0 — there is no spec.fleet on the
+	// Model any more); Delete does not and must not model that release.
 	Delete(ctx context.Context, name string) error
 	// ListRuns backs the reconcile loop's orphan diff (§5.2).
 	ListRuns(ctx context.Context) ([]Run, error)

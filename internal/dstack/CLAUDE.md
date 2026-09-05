@@ -29,6 +29,15 @@ dstack server (ledger D1 / the Tier-1 e2e-local suite).
   context, and the drain-first finalizer gets an unambiguous "already gone" signal on replay.
 - **A transport error must never be mistaken for `ErrNotFound`.** The sleep path treats an
   unreachable answer as "stay awake", never as "assume idle".
+- **A Go zero is not an explicit zero on the wire (D166).** `dstackDuration()` returns `""` for
+  `d <= 0`, and both `idle_duration` wire fields carried `,omitempty` — so `IdleDuration: 0`
+  used to omit the key entirely, and dstack applied its own defaults on an absent field:
+  `5m` for a run, **`3d` for a fleet**. That is the footgun the single-idle-window change
+  (squall now always sends `idle_duration: 0`, everywhere, so machine and job release
+  together) had to close first: both wire fields are `*int` with `,omitempty`, always set to
+  a pointer to zero, which DOES survive `omitempty`. Test the marshalled body for the literal
+  substring `"idle_duration":0` — asserting on a decoded struct passes even when the key is
+  silently absent.
 
 ## The wire shape is MEASURED — treat this file as the map
 

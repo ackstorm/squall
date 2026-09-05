@@ -107,7 +107,9 @@ func (c *HTTPClient) Stop(ctx context.Context, name string) error {
 }
 
 // Delete removes the run. Fleet instance release is dstack's own job via
-// fleet.idleDuration (F21); Delete does not and must not model that.
+// its fleet-level idle_duration (F21, always sent as 0 — there is no
+// spec.fleet on the Model any more); Delete does not and must not model
+// that release.
 func (c *HTTPClient) Delete(ctx context.Context, name string) error {
 	_, err := c.post(ctx, c.runsPath("delete"), deleteRunsRequest{RunsNames: []string{name}})
 	return err

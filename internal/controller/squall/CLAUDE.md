@@ -48,6 +48,36 @@ a costly recreate.
 - **Level-triggered idempotence.** Every path must be safe to replay: re-reconciling an
   already-Ready model must not re-Apply, and watch replays must not double-wake.
 
+## One idle window, not two
+
+`spec.fleet` is gone. `spec.idleTimeout` (`metav1.Duration`, default `5m`) is the only knob:
+past it, `Decide` flips `replicas: 0` AND squall always tells dstack `idle_duration: 0`, so
+the machine goes with the job — no warm pool on any backend, every wake is a full cold start.
+Both windows used to bill identically (the instance is rented throughout either way); the
+first just kept the weights in VRAM. There is no traffic pattern where the second window helps
+and several where it costs a needless reload, so the whole budget now lives in the window this
+package controls and gates on in-flight evidence
+(`docs/plans/2026-09-05-single-idle-window-design.md`).
+
+**`metav1.Duration`'s `omitempty` does not drop a zero value — it is a struct, not a scalar.**
+An `int32` field with `omitempty` used to drop an explicit `scaleDownDelaySeconds: 0` from
+serialization, so it read back as the CRD default. `IdleTimeout metav1.Duration` serializes a
+zero value as an explicit `"0s"`, which is not empty, so `omitempty` never fires and the CRD
+default never fires either — a Model whose typed object never had the field set (e.g. a test
+fixture unmarshalled client-side, then re-marshalled before `Create`) round-trips a written
+`0s` and fails the `idleTimeout > 0` validation for real, structural-schema defaulting having
+never had the chance to run. If a fixture or client-side object needs the default, set
+`IdleTimeout` explicitly rather than relying on omission.
+
+**Do not reintroduce a sleep gate keyed on "has this run ever been Ready."** It was proposed,
+approved, then withdrawn on live evidence (ledger D165): a client still waiting keeps
+`inFlight > 0`, which already makes `sleepDue` false, so the protection such a gate would add
+already exists. The only case it would change is when nobody is waiting — and there, gating
+sleep on Ready leaves a run that keeps crashing and recreating (F20) alive all the way to
+`provisioningTimeout`, burning real money for a request nobody is still holding. A
+`phase_test.go` case exists specifically to keep this from coming back; if you find yourself
+adding a `prior.ReadyAt`-shaped check ahead of `sleepDue`, stop and re-read D165 first.
+
 ## Test conventions
 
 - `phase_test.go` is pure and runs under `-short` with **no** skip.

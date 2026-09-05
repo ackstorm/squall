@@ -11,6 +11,19 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+### BREAKING
+
+- `spec.fleet` is removed and `spec.scaleDownDelaySeconds` is renamed to
+  `spec.idleTimeout`, now written as a duration (`5m`, not `300`).
+  **Rewrite your Models before applying the new CRD.** Kubernetes prunes
+  unknown fields, so an unmodified manifest applies without error and
+  silently takes `idleTimeout`'s 5m default — a Model that had
+  `scaleDownDelaySeconds: 600` goes from a 10-minute idle window to a
+  5-minute one with no warning.
+- Squall now always asks dstack for `idle_duration: 0`. There is no warm
+  pool on any backend, so every wake is a full cold start and `holdTimeout`
+  must cover one.
+
 ## [0.1.6] — 2026-09-04
 
 ### Fixed
