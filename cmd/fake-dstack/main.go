@@ -32,12 +32,11 @@ func main() {
 	// Tick from a FakeClock explicitly; this binary uses the real wall
 	// clock (mock.New()'s default), so something has to call Tick
 	// periodically for the mock's fleetIdleDuration to ever actually
-	// elapse against a live kind cluster. NOTE: squall itself now always
-	// sends FleetIdleDuration: 0, and mock.Server.Apply only overwrites
-	// fleetIdleDuration when the request's value is > 0 — so in real e2e
-	// traffic this Tick loop never actually releases anything; nothing in
-	// this suite currently asserts on that release becoming visible (see
-	// e2e_test.go's removed "past the fleet's idle window" spec).
+	// elapse against a live kind cluster. See ledger D169: squall itself
+	// now always sends FleetIdleDuration: 0, and mock.Server.Apply only
+	// overwrites fleetIdleDuration when the request's value is > 0 — so in
+	// real e2e traffic this Tick loop never actually releases anything,
+	// the opposite of real dstack's zero-tolerance semantics for 0.
 	tickInterval := 1 * time.Second
 	go func() {
 		ticker := time.NewTicker(tickInterval)
