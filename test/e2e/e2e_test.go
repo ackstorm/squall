@@ -72,7 +72,18 @@ spec:
     maxPricePerHour: "0.80"
   minReplicas: 0
   holdTimeout: 5s
-  idleTimeout: 2s
+  # 8s, not the 2s this had: idleTimeout is ALSO the demand annotation's
+  # TTL (hasDemand, model_controller.go). The proxy stamps demand-since at
+  # RFC3339 SECOND granularity and stops refreshing the moment the request
+  # commits — and against model-mock a request commits in ~20ms, so exactly
+  # one un-refreshed stamp has to survive until the controller next
+  # reconciles. With SQUALL_IDLE_REQUEUE_INTERVAL at 2s plus up to 1s lost
+  # to second-truncation, a 2s TTL expired first and the Model never woke
+  # at all. Not a regression: the pre-rename fixture had
+  # scaleDownDelaySeconds: 2, the identical 2s. It had simply never run —
+  # cluster-up itself was broken (see 00-namespaces/namespace.yaml), so CI
+  # never reached this spec.
+  idleTimeout: 8s
   drainTimeout: 10s
   provisioningTimeout: 5m
   maxLifetime: 168h
@@ -238,15 +249,27 @@ var _ = Describe("Model lifecycle (Task 11.3)", Ordered, func() {
 		}, 30*time.Second, time.Second).Should(Equal("Asleep"))
 	})
 
-	It("wakes on a real proxy request and reaches Waking with a live run", func() {
+	It("wakes on a real proxy request and mints a live run", func() {
 		go sendChatRequests(proxyAddr, loopModelName, 1)
 
+		// The assertion is "left Asleep carrying a run id", not "was
+		// observed in Waking". Waking is a transient this suite cannot
+		// sample reliably: dstack's Kubernetes backend admits the run
+		// almost immediately, so the Model is Ready ~2s after the wake and
+		// Waking lasts well under one poll interval. Asserting the
+		// intermediate state made the spec a race on how fast the backend
+		// answered; asserting the run id tests what the wake is FOR — a
+		// real proxy request caused squall to mint a dstack run — and it
+		// cannot pass while the Model is still asleep, because Asleep
+		// carries no run id.
 		Eventually(func(g Gomega) string {
-			return getModelStatus(g, loopModelName).Phase
-		}, 15*time.Second, time.Second).Should(Equal("Waking"))
+			return getModelStatus(g, loopModelName).RunID
+		}, 15*time.Second, time.Second).ShouldNot(BeEmpty(),
+			"a proxy request against an Asleep Model must produce a dstack run")
 
 		st := getModelStatus(Default, loopModelName)
-		Expect(st.RunID).NotTo(BeEmpty(), "Waking must carry a dstack run id")
+		Expect(st.Phase).To(BeElementOf("Waking", "Ready"),
+			"a woken Model must have left Asleep, in either direction of the wake")
 		wakeDeploymentNum, wakeRunID = st.DeploymentNum, st.RunID
 	})
 
@@ -254,7 +277,7 @@ var _ = Describe("Model lifecycle (Task 11.3)", Ordered, func() {
 		By("driving one more request through so the activity tracker records this Model idle")
 		sendChatRequests(proxyAddr, loopModelName, 1)
 
-		// idleTimeout: 2s in loopModelYAML — give the
+		// idleTimeout: 8s in loopModelYAML — give the
 		// reconciler (SQUALL_IDLE_REQUEUE_INTERVAL, see
 		// 02-operator/controller-patch.yaml) comfortably longer than
 		// that to notice.
