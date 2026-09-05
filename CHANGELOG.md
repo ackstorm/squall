@@ -15,14 +15,41 @@ out explicitly, because that is the class of change worth reading twice.
 
 - `spec.fleet` is removed and `spec.scaleDownDelaySeconds` is renamed to
   `spec.idleTimeout`, now written as a duration (`5m`, not `300`).
-  **Rewrite your Models before applying the new CRD.** Kubernetes prunes
-  unknown fields, so an unmodified manifest applies without error and
-  silently takes `idleTimeout`'s 5m default — a Model that had
+
+  **Upgrade order — apply the CRD FIRST, then rewrite your Models:**
+
+  ```sh
+  # 1. Helm NEVER upgrades CRDs from crds/ (it installs them once, on
+  #    install), so the new schema has to be applied by hand — a chart
+  #    upgrade alone reports success and changes nothing. Ledger D160.
+  kubectl apply --server-side -f deploy/helm/squall/crds/squall.ackstorm.ai_models.yaml
+  # 2. Only now can a Model without spec.fleet be accepted: the 0.1.6 CRD
+  #    lists `fleet` in its required fields, so rewriting first fails.
+  kubectl apply -f your-models.yaml
+  ```
+
+  **Then rewrite every Model.** Kubernetes prunes unknown fields, so an
+  unmodified manifest applies without error and silently takes
+  `idleTimeout`'s 5m default — a Model that had
   `scaleDownDelaySeconds: 600` goes from a 10-minute idle window to a
   5-minute one with no warning.
 - Squall now always asks dstack for `idle_duration: 0`. There is no warm
   pool on any backend, so every wake is a full cold start and `holdTimeout`
   must cover one.
+- `spec.idleTimeout` and `spec.provisioningTimeout` are now rejected at
+  zero. `idleTimeout` doubles as the demand annotation's TTL, so a zero
+  expires demand the instant squall-proxy writes it and the Model can never
+  wake; `provisioningTimeout` is the only bound on a run that never reaches
+  Ready, and a non-positive value silently disables it.
+
+### Changed
+
+- The validation warning about a warm window that a backend cannot honour
+  is replaced by one on `holdTimeout < provisioningTimeout / 2`. With no
+  warm pool anywhere, there is no per-backend warm window left to warn
+  about — the question is now only whether a hold is long enough to cover
+  a full cold start, or will answer 503 to the request that triggered the
+  wake. It is a heuristic, not a rule, and it names the values it used.
 
 ## [0.1.6] — 2026-09-04
 
