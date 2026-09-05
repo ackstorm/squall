@@ -23,11 +23,10 @@ import (
 // squall_v1alpha1_model.yaml — the spec §5.1 example CR — against a real
 // envtest API server and reads it back. It asserts the server-populated
 // defaults appear (uid, resourceVersion, generation) and that the CR's own
-// values round-trip unchanged. fleet.idleDuration deliberately has no
-// default (spec §5.1, F21); health, scaleDownDelaySeconds and drainTimeout
-// DO default (D105/D123 — the sample sets all three explicitly, so its
-// values must still round-trip untouched here; the defaults themselves are
-// asserted by TestMinimalModel_DefaultsScaleDownDelayAndDrainTimeout).
+// values round-trip unchanged. health and drainTimeout DO default
+// (D105/D123 — the sample sets both explicitly, so its values must still
+// round-trip untouched here; the defaults themselves are asserted by
+// TestMinimalModel_DefaultsIdleTimeoutAndDrainTimeout).
 func TestSampleModel_AppliesAndDefaultsMaterialise(t *testing.T) {
 	// Needs a control plane, so it belongs to `make test-envtest`, not
 	// `make test-unit` (-short). TestMain skips envtest startup under
@@ -83,9 +82,6 @@ func TestSampleModel_AppliesAndDefaultsMaterialise(t *testing.T) {
 	if got.Spec.MinReplicas != 0 {
 		t.Errorf("spec.minReplicas = %d, want 0", got.Spec.MinReplicas)
 	}
-	if got.Spec.Fleet.IdleDuration.Duration != 10*time.Minute {
-		t.Errorf("spec.fleet.idleDuration = %s, want 10m", got.Spec.Fleet.IdleDuration.Duration)
-	}
 	if got.Spec.HoldTimeout.Duration != 20*time.Minute {
 		t.Errorf("spec.holdTimeout = %s, want 20m", got.Spec.HoldTimeout.Duration)
 	}
@@ -106,16 +102,16 @@ func TestSampleModel_AppliesAndDefaultsMaterialise(t *testing.T) {
 	}
 }
 
-// TestMinimalModel_DefaultsScaleDownDelayAndDrainTimeout is D105/D123: a
-// schema-valid Model that omits scaleDownDelaySeconds was permanently
-// unwakeable (the field is hasDemand's TTL, so zero made the demand
-// annotation expire the instant it landed — silently, with no event or
-// condition), and one that omits drainTimeout got ZERO drain on delete
-// (pastDeadline true on the finalizer's first pass). Both now default at
-// admission to the spec's own §5.1 example values; a real API server is
-// the only place structural-schema defaulting actually runs, which is why
-// this is envtest.
-func TestMinimalModel_DefaultsScaleDownDelayAndDrainTimeout(t *testing.T) {
+// TestMinimalModel_DefaultsIdleTimeoutAndDrainTimeout is D105/D123: a
+// schema-valid Model that omits idleTimeout was permanently unwakeable
+// (the field is hasDemand's TTL, so zero made the demand annotation expire
+// the instant it landed — silently, with no event or condition), and one
+// that omits drainTimeout got ZERO drain on delete (pastDeadline true on
+// the finalizer's first pass). Both now default at admission to the
+// spec's own §5.1 example values; a real API server is the only place
+// structural-schema defaulting actually runs, which is why this is
+// envtest.
+func TestMinimalModel_DefaultsIdleTimeoutAndDrainTimeout(t *testing.T) {
 	if testing.Short() {
 		t.Skip("envtest test: run via make test-envtest")
 	}
@@ -143,8 +139,6 @@ spec:
   provisioningTimeout: 30m
   placement:
     backends: [vastai]
-  fleet:
-    idleDuration: 10m
 `)
 	var asMap map[string]interface{}
 	if err := yaml.Unmarshal(raw, &asMap); err != nil {
@@ -160,9 +154,9 @@ spec:
 	if err := k8sClient.Get(ctx, types.NamespacedName{Name: "minimal-defaults", Namespace: "default"}, got); err != nil {
 		t.Fatalf("get minimal Model: %v", err)
 	}
-	if got.Spec.ScaleDownDelaySeconds != 300 {
-		t.Errorf("spec.scaleDownDelaySeconds = %d, want the §5.1 default 300 — zero means this Model can never wake (D105)",
-			got.Spec.ScaleDownDelaySeconds)
+	if got.Spec.IdleTimeout.Duration != 5*time.Minute {
+		t.Errorf("spec.idleTimeout = %s, want the §5.1 default 5m — zero means this Model can never wake (D105)",
+			got.Spec.IdleTimeout.Duration)
 	}
 	if got.Spec.DrainTimeout.Duration != 120*time.Second {
 		t.Errorf("spec.drainTimeout = %s, want the §5.1 default 120s — zero means zero drain on delete (D123)",

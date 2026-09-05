@@ -42,6 +42,19 @@ var ErrNotFound = errors.New("dstack mock: run not found")
 // rather than a bill.
 var ErrDeleteActiveRun = errors.New("dstack mock: Cannot delete active runs")
 
+// ErrCannotOverride mirrors real dstack refusing to update an ACTIVE run
+// whose submitted configuration differs from the stored one in anything but
+// the replica count: HTTP 400 "Cannot override active run. Stop the run
+// first." MEASURED on dstack 0.21.2 (D115 addendum, D156) — the wording is
+// what classifyError keys off, so it is reproduced verbatim.
+//
+// The fake compares only the configuration fields it DECODES, which today
+// means idle_duration. That is the whole point: this refusal is the reason
+// D156's rule exists ("anything added to configurationWire must be sent BY
+// DIRECTION"), so every field this fake learns to decode must join the
+// comparison below, or the guard goes quiet again.
+var ErrCannotOverride = errors.New("dstack mock: Cannot override active run. Stop the run first.")
+
 // ValidToken is the bearer token the fake's gateway route accepts (F23's
 // three status branches). The run-management surface's token is whatever
 // NewHTTPServer was constructed with — see its doc comment.
@@ -76,6 +89,14 @@ type ApplyRequest struct {
 	// duration untouched, so only the first Apply for a service needs to
 	// set it.
 	FleetIdleDuration time.Duration
+
+	// IdleDuration is the run's OWN idle_duration in whole seconds, exactly
+	// as it appears (or does not) on the wire: nil means the submitted
+	// configuration carries no idle_duration key at all, which is what every
+	// run created by squall <= v0.1.4 stored. Absent and 0 are DIFFERENT
+	// specs to dstack, and telling them apart is what makes the override
+	// refusal below reproducible.
+	IdleDuration *int
 }
 
 // Run is the fake's view of dstack run state, returned by Apply, Get and
@@ -101,6 +122,11 @@ type Run struct {
 	ServiceURL string
 
 	SubmittedAt time.Time
+
+	// IdleDuration is the stored configuration's idle_duration in whole
+	// seconds, nil when the key is absent — echoed back on Get exactly as
+	// dstack echoes run_spec.configuration.
+	IdleDuration *int
 }
 
 // service is the mutable per-name state the mock tracks.
@@ -135,6 +161,19 @@ type service struct {
 	// reset on a terminal recreate (F20). Callers use ApplyCount to assert
 	// "exactly one effective wake action" under concurrent demand (AC4).
 	applyCount int
+
+	// idleDuration is the run's stored idle_duration in whole seconds, nil
+	// when the stored configuration has no such key (see ApplyRequest).
+	idleDuration *int
+}
+
+// sameSeconds compares two optional whole-second values the way dstack
+// compares two specs: an ABSENT key and an explicit 0 are different.
+func sameSeconds(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // fleet is the mock's minimal view of a created fleet: just enough to
@@ -242,6 +281,7 @@ func (s *Server) runFor(name string, svc *service) *Run {
 		Status:        statusFor(svc),
 		ServiceURL:    "/proxy/services/main/" + name + "/",
 		SubmittedAt:   svc.submittedAt,
+		IdleDuration:  svc.idleDuration,
 	}
 }
 
@@ -267,6 +307,14 @@ func (s *Server) Apply(req ApplyRequest) (*Run, error) {
 		s.services[req.Name] = svc
 	case req.Current == nil || req.Current.RunID != svc.runID || req.Current.DeploymentNum != svc.deploymentNum:
 		return nil, ErrResourceChanged
+	case svc.replicas > 0 && !sameSeconds(svc.idleDuration, req.IdleDuration):
+		// MEASURED (D156, legs B and C): flipping an ACTIVE run — one with
+		// live replicas — to 0 is accepted when the spec is otherwise
+		// identical and REFUSED when idle_duration was newly added. Only
+		// the active case is modelled because only the active case was
+		// measured; widening it to a run already at 0 replicas would be
+		// invention, and would change the wake path this fake underpins.
+		return nil, ErrCannotOverride
 	}
 
 	wasAwake := svc.replicas > 0
@@ -274,6 +322,7 @@ func (s *Server) Apply(req ApplyRequest) (*Run, error) {
 	svc.replicas = req.Replicas
 	svc.applyCount++
 	svc.instanceUp = true // this Apply call itself never releases the machine (F21)
+	svc.idleDuration = req.IdleDuration
 	if req.FleetIdleDuration > 0 {
 		svc.fleetIdleDuration = req.FleetIdleDuration
 	}

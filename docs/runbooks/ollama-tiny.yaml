@@ -31,7 +31,15 @@ spec:
   drainTimeout: 30s
   maxLifetime: 4h
   provisioningTimeout: 20m
-  scaleDownDelaySeconds: 120
+
+  # Short on purpose, and now the ONLY idle timer: squall always tells
+  # dstack idle_duration: 0, so this one window releases the job and the
+  # machine together (spec.fleet is gone). The ~4m gap once observed
+  # 2026-08-31 between squall's 1->0 flip and the Vast instance actually
+  # disappearing was investigated as a possible second, dstack-side timer;
+  # with only one window left to reason about, a short value here still
+  # keeps iteration cheap.
+  idleTimeout: 2m
 
   # Sized for the live unhealthy-teardown test (battery test 6): three
   # consecutive non-2xx while traffic is still arriving, then two minutes
@@ -40,13 +48,6 @@ spec:
   health:
     unhealthyAfter: 2m
     failureThreshold: 3
-
-  # Short on purpose: the ~4m gap between squall's 1->0 flip and the Vast
-  # instance actually disappearing is still unexplained (observed 2026-08-31
-  # against idleDuration: 10m, so it was NOT this timer). Setting it to 2m
-  # makes the two hypotheses distinguishable in one run.
-  fleet:
-    idleDuration: 2m
 
   probe:
     # Ollama exposes no /health; its root answers "Ollama is running".

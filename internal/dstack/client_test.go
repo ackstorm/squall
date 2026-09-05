@@ -3,9 +3,11 @@
 package dstack_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,6 +16,11 @@ import (
 	"github.com/ackstorm/squall/internal/dstack"
 	"github.com/ackstorm/squall/internal/dstack/mock"
 )
+
+// secs is a *time.Duration literal helper: an ApplyRequest distinguishes
+// "send this value" from "send no idle_duration key at all" (D156), so
+// every test that means the former has to say so explicitly.
+func secs(d time.Duration) *time.Duration { return &d }
 
 func TestHTTPClient_Apply_SendsIdleDuration(t *testing.T) {
 	var body map[string]any
@@ -27,33 +34,114 @@ func TestHTTPClient_Apply_SendsIdleDuration(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
-	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{Name: "qwen", Replicas: 1, Image: "img", Port: 8080, IdleDuration: 10 * time.Minute}); err != nil {
+	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{Name: "qwen", Replicas: 1, Image: "img", Port: 8080, IdleDuration: secs(10 * time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
 	cfg := body["run_spec"].(map[string]any)["configuration"].(map[string]any)
-	if cfg["idle_duration"] != "600s" {
+	if cfg["idle_duration"] != float64(600) {
 		t.Fatalf("idle_duration = %v", cfg["idle_duration"])
 	}
 }
 
-func TestHTTPClient_Apply_OmitsIdleDurationWhenZero(t *testing.T) {
-	var body map[string]any
+// TestHTTPClient_Apply_SleepOmitsAbsentIdleDuration is D156's encoding
+// guard, the mirror image of the explicit-zero one below. A run created by
+// squall <= v0.1.4 stored NO idle_duration key; the sleep flip re-sends
+// that run's stored configuration, and dstack refuses an active run whose
+// submitted spec differs from the stored one in anything beyond replicas —
+// so an added `idle_duration: 0` wedges the flip and the GPU bills on.
+// A nil IdleDuration must therefore reach the wire as nothing at all.
+//
+// The assertion is on raw bytes: unmarshalling into a struct cannot tell
+// "sent 0" from "sent nothing", which is the whole distinction under test.
+func TestHTTPClient_Apply_SleepOmitsAbsentIdleDuration(t *testing.T) {
+	var planBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == getPlanPath {
-			_ = json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case getPlanPath:
+			planBody, _ = io.ReadAll(r.Body)
 			_, _ = w.Write([]byte(`{"run_spec":{},"current_resource":null,"action":"create"}`))
-			return
+		case applyPath:
+			_, _ = w.Write([]byte(`{"id":"abc","jobs":[],"run_spec":{"configuration":{"replicas":{"min":0,"max":0}}}}`))
 		}
-		_, _ = w.Write([]byte(`{"id":"abc","jobs":[],"run_spec":{"configuration":{"replicas":{"min":1,"max":1}}}}`))
 	}))
 	t.Cleanup(srv.Close)
 	c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
-	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{Name: "qwen", Replicas: 1, Image: "img", Port: 8080}); err != nil {
+	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{
+		Name: "qwen", Replicas: 0, Image: "img", Port: 8080, IdleDuration: nil,
+	}); err != nil {
 		t.Fatal(err)
 	}
-	cfg := body["run_spec"].(map[string]any)["configuration"].(map[string]any)
-	if _, ok := cfg["idle_duration"]; ok {
-		t.Fatalf("idle_duration unexpectedly present")
+	if bytes.Contains(planBody, []byte(`"idle_duration"`)) {
+		t.Fatalf("sleep plan body carries an idle_duration the stored run never had.\n"+
+			"dstack answers 400 \"Cannot override active run\" and the Model stays awake (D156).\nbody = %s", planBody)
+	}
+}
+
+// TestHTTPClient_Apply_SendsExplicitIdleDurationZero is D166's guard. A Go
+// zero used to serialize as an ABSENT key, and dstack reads an absent
+// idle_duration as "apply my default" — 5m for a run, 3d for a fleet. The
+// assertion is on raw bytes on purpose: unmarshalling into a struct with a
+// *int field cannot tell "sent 0" from "sent nothing".
+func TestHTTPClient_Apply_SendsExplicitIdleDurationZero(t *testing.T) {
+	var planBody []byte
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case getPlanPath:
+			planBody, _ = io.ReadAll(r.Body)
+			_, _ = w.Write([]byte(`{"run_spec":{},"current_resource":null,"action":"create"}`))
+		case applyPath:
+			_, _ = w.Write([]byte(`{"id":"abc","jobs":[],"run_spec":{"configuration":{"replicas":{"min":1,"max":1}}}}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
+	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{
+		Name: "qwen", Replicas: 1, Image: "img", Port: 8080, IdleDuration: secs(0),
+	}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if !bytes.Contains(planBody, []byte(`"idle_duration":0`)) {
+		t.Fatalf("run plan body does not carry an explicit idle_duration: 0.\n"+
+			"An absent key makes dstack apply its own 5m run default (D166).\nbody = %s", planBody)
+	}
+}
+
+// TestHTTPClient_EnsureFleet_SendsExplicitIdleDurationZero is the same
+// guard on the fleet path, where the default squall would inherit is
+// THREE DAYS of paid idle instance.
+func TestHTTPClient_EnsureFleet_SendsExplicitIdleDurationZero(t *testing.T) {
+	var planBody []byte
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/project/main/fleets/get":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"detail":[{"code":"resource_not_exists"}]}`))
+		case "/api/project/main/fleets/get_plan":
+			planBody, _ = io.ReadAll(r.Body)
+			_, _ = w.Write([]byte(`{"spec":{"configuration":{"type":"fleet","name":"squall-auto-vastai","nodes":"0.."}}}`))
+		case "/api/project/main/fleets/apply":
+			_, _ = w.Write([]byte(`{"id":"f1","name":"squall-auto-vastai"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
+	if err := c.EnsureFleet(context.Background(), dstack.FleetSpec{
+		Name: "squall-auto-vastai", Backends: []string{"vastai"}, IdleDuration: 0,
+	}); err != nil {
+		t.Fatalf("EnsureFleet: %v", err)
+	}
+
+	if !bytes.Contains(planBody, []byte(`"idle_duration":0`)) {
+		t.Fatalf("fleet plan body does not carry an explicit idle_duration: 0.\n"+
+			"An absent key makes dstack apply its own THREE DAY fleet default (D166).\nbody = %s", planBody)
 	}
 }
 
@@ -100,15 +188,18 @@ func TestHTTPClient_Apply_OmitsMaxDurationWhenZero(t *testing.T) {
 }
 
 const getPlanPath = "/api/project/main/runs/get_plan"
+const applyPath = "/api/project/main/runs/apply"
 const fleetGetPath = "/api/project/main/fleets/get"
 
 func TestHTTPClient_Get_DecodesStoredIdleDuration(t *testing.T) {
 	for _, tc := range []struct {
 		name, echo string
-		want       time.Duration
+		want       *time.Duration
 	}{
-		{"stored value", `600`, 10 * time.Minute},
-		{"pre-upgrade run stores none", `null`, 0},
+		{"stored value", `600`, secs(10 * time.Minute)},
+		// nil, NOT zero: the sleep flip re-sends whatever this decodes to,
+		// and zero would put a key on the wire the stored run never had.
+		{"pre-upgrade run stores none", `null`, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -121,8 +212,11 @@ func TestHTTPClient_Get_DecodesStoredIdleDuration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Get: %v", err)
 			}
-			if run.IdleDuration != tc.want {
-				t.Fatalf("IdleDuration = %v, want %v", run.IdleDuration, tc.want)
+			switch {
+			case tc.want == nil && run.IdleDuration != nil:
+				t.Fatalf("IdleDuration = %v, want nil (absent key)", *run.IdleDuration)
+			case tc.want != nil && (run.IdleDuration == nil || *run.IdleDuration != *tc.want):
+				t.Fatalf("IdleDuration = %v, want %v", run.IdleDuration, *tc.want)
 			}
 		})
 	}
@@ -141,7 +235,7 @@ func TestHTTPClient_Apply_IsTwoStepAndNeverForces(t *testing.T) {
 			sawPlan = true
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"run_spec":{"run_name":"qwen","configuration":{"replicas":{"min":1,"max":1}}},"current_resource":null,"action":"create"}`))
-		case "/api/project/main/runs/apply":
+		case applyPath:
 			sawApply = true
 			if err := json.NewDecoder(r.Body).Decode(&applyBody); err != nil {
 				t.Errorf("decode apply body: %v", err)
@@ -196,7 +290,7 @@ func TestHTTPClient_Apply_RoundTripsCurrentResourceVerbatim(t *testing.T) {
 		case getPlanPath:
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"run_spec":{},"current_resource":null,"action":"update"}`))
-		case "/api/project/main/runs/apply":
+		case applyPath:
 			var body struct {
 				Plan struct {
 					CurrentResource json.RawMessage `json:"current_resource"`

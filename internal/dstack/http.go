@@ -107,7 +107,9 @@ func (c *HTTPClient) Stop(ctx context.Context, name string) error {
 }
 
 // Delete removes the run. Fleet instance release is dstack's own job via
-// fleet.idleDuration (F21); Delete does not and must not model that.
+// its fleet-level idle_duration (F21, always sent as 0 — there is no
+// spec.fleet on the Model any more); Delete does not and must not model
+// that release.
 func (c *HTTPClient) Delete(ctx context.Context, name string) error {
 	_, err := c.post(ctx, c.runsPath("delete"), deleteRunsRequest{RunsNames: []string{name}})
 	return err
@@ -226,7 +228,7 @@ func (c *HTTPClient) createFleet(ctx context.Context, spec FleetSpec) error {
 				Nodes:        "0..",
 				Resources:    fleetFloorResources,
 				Backends:     spec.Backends,
-				IdleDuration: dstackDuration(spec.IdleDuration),
+				IdleDuration: dstackSeconds(spec.IdleDuration),
 			},
 		},
 	})
@@ -266,7 +268,7 @@ func runSpec(req ApplyRequest) runSpecWire {
 			Backends:     req.Placement.Backends,
 			Regions:      req.Placement.Regions,
 			MaxPrice:     req.Placement.MaxPrice,
-			IdleDuration: dstackDuration(req.IdleDuration),
+			IdleDuration: dstackSecondsPtr(req.IdleDuration),
 			MaxDuration:  dstackDuration(req.MaxDuration),
 		},
 	}
@@ -348,7 +350,7 @@ func decodeRun(body []byte) (*Run, error) {
 		ProbesReady:         probesReady(w.Jobs, w.DeploymentNum, echoedReadyAfter(w)),
 		Env:                 w.RunSpec.Configuration.Env,
 		SSHKeyPub:           w.RunSpec.SSHKeyPub,
-		IdleDuration:        wireSeconds(w.RunSpec.Configuration.IdleDuration),
+		IdleDuration:        wireSecondsPtr(w.RunSpec.Configuration.IdleDuration),
 		MaxDuration:         wireSeconds(w.RunSpec.Configuration.MaxDuration),
 		Status:              w.Status,
 		SubmittedAt:         w.SubmittedAt,

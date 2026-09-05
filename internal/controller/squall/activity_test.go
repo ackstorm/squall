@@ -11,7 +11,7 @@ import (
 // aggregation (Task 7.1). It is the block 7+8 plan's T2-T5: T1's time
 // comparison and T7's pin gate live one layer up, in phase.go's Decide
 // and sleepDue, since aggregateActivity itself has no notion of
-// scaleDownDelaySeconds or spec.MinReplicas.
+// spec.IdleTimeout or spec.MinReplicas.
 func TestAggregateActivity(t *testing.T) {
 	t1 := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	t2 := t1.Add(time.Minute)

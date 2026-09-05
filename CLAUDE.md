@@ -76,6 +76,21 @@ claiming a behaviour is covered, **mutate the implementation to break it and wat
 red.** A mutation that leaves the suite green is a finding, not a formality. See
 `docs/references/testing-discipline.md`.
 
+**The same failure mode applies to probing a live API — and it has bitten twice.** Vast.ai's
+`/api/v0/` is deprecated and answers `410` with a JSON *error body*. A check written as
+`json.load(x).get("instances", [])` reads that body, finds no key, and reports **zero
+instances** — a green "nothing is running, nothing is billing" that is computed over an error.
+Measured 2026-09-05: every `v0` instance check that day was vacuous.
+
+Rules for any live-API probe, money-related or not:
+
+- **Vast.ai: use `/api/v1/`.** `v0` is gone.
+- **Assert the success shape before reading it.** `if not d.get("success") or "instances" not
+  in d: raise` — never `.get(key, default)` on a response you have not proven is a success.
+- **Check the HTTP status.** `curl -w '%{http_code}'`, and in Python let a non-2xx raise.
+- A probe that cannot fail loudly is not evidence. Treat "0" from an unchecked call exactly
+  like a test that passes for the wrong reason.
+
 ## Rules for concurrent agents on one branch — learned the hard way
 
 Two agents once ran concurrently and one destroyed work. These go in **every** implementer

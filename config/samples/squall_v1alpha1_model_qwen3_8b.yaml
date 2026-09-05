@@ -88,29 +88,22 @@ spec:
 
   minReplicas: 0
 
-  # MEASURED cold start was 9m53s. holdTimeout must cover a full cold start,
-  # because there is no warm pool on Vast (see fleet.idleDuration below) —
-  # every wake pays for one.
+  # There is no warm pool on any backend: squall always tells dstack
+  # idle_duration: 0, so the machine goes with the job. holdTimeout must
+  # therefore cover a full cold start on every wake — MEASURED at 9m53s.
   holdTimeout: 20m
 
-  # The idle window before the run drops to zero replicas. Note this expired
-  # 14 minutes BEFORE the GPU finished provisioning on the measured run: the
-  # demand that triggered the wake does not survive the wake. That is
-  # working as designed — the request is held by holdTimeout, not by this —
-  # but it is why the two numbers are not interchangeable.
-  scaleDownDelaySeconds: 300
+  # The idle window before the run drops to zero replicas and dstack
+  # releases the machine. Note this expired 14 minutes BEFORE the GPU
+  # finished provisioning on the measured run: the demand that triggered
+  # the wake does not survive the wake. That is working as designed — the
+  # request is held by holdTimeout, not by this — but it is why the two
+  # numbers are not interchangeable.
+  idleTimeout: 5m
 
   provisioningTimeout: 30m
   drainTimeout: 1m
   maxLifetime: 168h
-
-  fleet:
-    # INERT ON VAST.AI (D158). dstack only honours an idle window where its
-    # internal `dockerized` flag is true; on Vast.ai, Kubernetes and RunPod
-    # it is false, dstack forces the window to zero and never reads this
-    # value. Measured: instance gone 45s after sleep against a declared 30m.
-    # Kept here so the file stays portable to a VM backend, where it binds.
-    idleDuration: 10m
 
   health:
     unhealthyAfter: 15m

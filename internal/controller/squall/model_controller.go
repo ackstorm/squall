@@ -805,11 +805,27 @@ func (r *ModelReconciler) applyEnvFor(ctx context.Context, model *squallv1alpha1
 	return withModelUID(nil, model), "", nil
 }
 
-func applyDurationsFor(model *squallv1alpha1.Model, action Action) (idle, hard time.Duration) {
+// applyDurationsFor splits the two duration fields by DIRECTION, the rule
+// D156 left behind: on the SLEEP flip squall reproduces the active run's
+// stored configuration verbatim — value AND presence, so a run created
+// before squall sent idle_duration is flipped with no idle_duration key at
+// all. Re-sending an explicit 0 there is a spec difference beyond replicas,
+// dstack answers 400 "Cannot override active run", and because a refused
+// sleep is deliberately never acted on (1->0 fails safe) the Model stays
+// awake and bills forever.
+func applyDurationsFor(model *squallv1alpha1.Model, action Action) (idle *time.Duration, hard time.Duration) {
 	if action.Replicas == 0 && action.Current != nil {
 		return action.Current.IdleDuration, action.Current.MaxDuration
 	}
-	idle = model.Spec.Fleet.IdleDuration.Duration
+	// Always an EXPLICIT zero on the wake path. dstack's fleet idle window
+	// is a second idle window that bills exactly like the first one and buys
+	// strictly less: it keeps the machine but drops the weights, so a wake
+	// inside it still reloads. The whole budget belongs in idleTimeout,
+	// which the controller gates on in-flight evidence. Explicit because an
+	// ABSENT key is dstack's own 5m default, not zero (D166). See the
+	// single-idle-window design.
+	zero := time.Duration(0)
+	idle = &zero
 	if model.Spec.MinReplicas == 0 {
 		hard = model.Spec.HardStop.Duration
 	}
@@ -898,7 +914,7 @@ func (r *ModelReconciler) checkSchedulable(ctx context.Context, model *squallv1a
 	// comment). This is diagnosis, NOT a veto: 0->1 fails open, so a
 	// preflight that could not run, or that ran clean, never blocks
 	// the Apply below.
-	if reason, msg, fleets := preflight(ctx, r.DstackClient, enginePlacement(model.Spec.Placement).Backends, model.Spec.Fleet.IdleDuration.Duration); reason != "" {
+	if reason, msg, fleets := preflight(ctx, r.DstackClient, enginePlacement(model.Spec.Placement).Backends); reason != "" {
 		if fleets != nil {
 			model.Status.Fleet = fleets
 		}
@@ -972,7 +988,7 @@ func (r *ModelReconciler) recordMetrics(model *squallv1alpha1.Model, observedPer
 			t := model.Status.LastRequestAt.Time
 			last = &t
 		}
-		r.IdleMetrics.Observe(model.Namespace, model.Name, last, runActive, time.Duration(model.Spec.ScaleDownDelaySeconds)*time.Second)
+		r.IdleMetrics.Observe(model.Namespace, model.Name, last, runActive, model.Spec.IdleTimeout.Duration)
 	}
 }
 
@@ -1018,7 +1034,7 @@ func (r *ModelReconciler) observe(ctx context.Context, runName, activityKey stri
 		// §6: Ready has two named evidences, whichever arrives first —
 		// (a) dstack's own probe state (F35), (b) a first-party forward
 		// success reported by the proxy. Squall probes nothing itself.
-		observed.Ready = run.ProbesReady || freshSuccess(observed.Activity, now, time.Duration(spec.ScaleDownDelaySeconds)*time.Second)
+		observed.Ready = run.ProbesReady || freshSuccess(observed.Activity, now, spec.IdleTimeout.Duration)
 	}
 	return observed, nil
 }
@@ -1166,7 +1182,7 @@ func (r *ModelReconciler) activityHTTPClient() *http.Client {
 // hasDemand reports whether the proxy's coalesced demand annotation (see
 // squallv1alpha1.DemandAnnotation) is present AND not yet self-expired:
 // its value is the RFC3339 instant demand was last coalesced, and it only
-// counts while now is within ScaleDownDelaySeconds of that instant — a
+// counts while now is within IdleTimeout of that instant — a
 // stale annotation the proxy failed to clear (or never will, e.g. after a
 // proxy crash) must not pin a Model awake forever (block 7+8 plan §2). A
 // missing key, or a value that fails to parse as RFC3339, both resolve to
@@ -1180,8 +1196,7 @@ func hasDemand(m *squallv1alpha1.Model, now time.Time) bool {
 	if err != nil {
 		return false
 	}
-	ttl := time.Duration(m.Spec.ScaleDownDelaySeconds) * time.Second
-	return now.Sub(demandSince) < ttl
+	return now.Sub(demandSince) < m.Spec.IdleTimeout.Duration
 }
 
 // SetupWithManager sets up the controller with the Manager.

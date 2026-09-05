@@ -144,7 +144,7 @@ type Handler struct {
 
 	// RefreshInterval is now a CEILING, not the interval itself (LIVE-3,
 	// corrected): the actual per-hold cadence is derived per-Model by
-	// refreshIntervalFor from that Model's OWN spec.scaleDownDelaySeconds,
+	// refreshIntervalFor from that Model's OWN spec.idleTimeout,
 	// because one proxy-wide value cannot be right for every Model at once —
 	// measured live, a 300s production Model and a 2s e2e fixture disagreed
 	// about their TTL in the same cluster, and the 2s fixture's tuned value
@@ -167,7 +167,7 @@ type Handler struct {
 }
 
 // refreshIntervalFor derives a held request's demand-refresh cadence from
-// THAT Model's own scaleDownDelaySeconds — the annotation's self-expiry TTL
+// THAT Model's own idleTimeout — the annotation's self-expiry TTL
 // — rather than one proxy-wide constant (LIVE-3, corrected). A single global
 // interval cannot be right for every Model at once: measured live, a real
 // 300s production Model inherited a refresh interval tuned for a 2s e2e
@@ -185,17 +185,17 @@ type Handler struct {
 // operator to tune (Handler.RefreshInterval / SQUALL_DEMAND_REFRESH_INTERVAL):
 // it bounds how stale demand evidence is allowed to get even for a Model
 // with a very long TTL, and is what a Model with no TTL configured
-// (scaleDownDelaySeconds <= 0, e.g. never scales down) falls back to
+// (idleTimeout <= 0, e.g. never scales down) falls back to
 // entirely.
-func refreshIntervalFor(scaleDownDelaySeconds int32, ceiling time.Duration) time.Duration {
+func refreshIntervalFor(idleTimeout time.Duration, ceiling time.Duration) time.Duration {
 	const (
 		fraction = 10
 		floor    = 500 * time.Millisecond
 	)
-	if scaleDownDelaySeconds <= 0 {
+	if idleTimeout <= 0 {
 		return ceiling
 	}
-	interval := time.Duration(scaleDownDelaySeconds) * time.Second / fraction
+	interval := idleTimeout / fraction
 	if interval < floor {
 		interval = floor
 	}
@@ -362,7 +362,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		deadline = h.clock().Now().Add(snap.HoldTimeout)
-		refresh = refreshIntervalFor(snap.ScaleDownDelaySeconds, h.RefreshInterval)
+		refresh = refreshIntervalFor(snap.IdleTimeout, h.RefreshInterval)
 		holdStart = time.Now()
 		slog.Info("holding request for a waking model",
 			"model", model, "phase", string(snap.Phase), "hold_timeout", snap.HoldTimeout.String())

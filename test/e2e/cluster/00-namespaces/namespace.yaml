@@ -1,11 +1,31 @@
-# `squall` is the workload namespace: fake-dstack (01) and the Model fixture
-# (03) live here. The control-plane namespace (squall-system) is deliberately
-# NOT created here — config/default already owns that Namespace object
-# (phase 02), and declaring it twice would just be two manifests fighting
-# over one object for no benefit.
+# `squall` is the workload namespace: the Model fixture (03) and the engine
+# double (01) live here, and dstack's Kubernetes backend runs jobs here.
+#
+# It has TWO would-be creators, and that is why the Helm ownership metadata
+# below is not optional. The chart declares this same Namespace as
+# `dstack.runsNamespace` (templates/dstack-namespace.yaml), but the chart is
+# installed at phase 04 — long after phase 01 needs the namespace to exist to
+# deploy model-mock into. So the fixture has to create it first, and Helm then
+# refuses to adopt a resource it does not own:
+#
+#   Error: Unable to continue with install: Namespace "squall" exists and
+#   cannot be imported into the current release: invalid ownership metadata;
+#   label validation error: missing key "app.kubernetes.io/managed-by"
+#
+# These three keys are Helm's documented adoption contract. They must match
+# hack/cluster.sh's HELM_RELEASE (default "squall") and its hardcoded
+# --namespace squall-system. Change either there and this must follow.
+#
+# The control-plane namespace (squall-system) is NOT created here: cluster.sh
+# pre-creates it directly and `helm --create-namespace` is a no-op once it
+# exists.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: squall
   labels:
     e2e: "true"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    meta.helm.sh/release-name: squall
+    meta.helm.sh/release-namespace: squall-system

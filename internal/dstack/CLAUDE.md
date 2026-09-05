@@ -29,6 +29,23 @@ dstack server (ledger D1 / the Tier-1 e2e-local suite).
   context, and the drain-first finalizer gets an unambiguous "already gone" signal on replay.
 - **A transport error must never be mistaken for `ErrNotFound`.** The sleep path treats an
   unreachable answer as "stay awake", never as "assume idle".
+- **A Go zero is not an explicit zero on the wire (D166).** `dstackDuration()` returns `""` for
+  `d <= 0`, and both `idle_duration` wire fields carried `,omitempty` — so `IdleDuration: 0`
+  used to omit the key entirely, and dstack applied its own defaults on an absent field:
+  `5m` for a run, **`3d` for a fleet**. That is the footgun the single-idle-window change
+  (squall now always sends `idle_duration: 0`, everywhere, so machine and job release
+  together) had to close first: both wire fields are `*int` with `,omitempty`, and a pointer
+  to zero DOES survive `omitempty`. Test the marshalled body for the literal substring
+  `"idle_duration":0` — asserting on a decoded struct passes even when the key is silently
+  absent.
+- **…but the run path sends it BY DIRECTION, and nil still means "no key at all" (D156,
+  regressed and re-fixed as D170).** `ApplyRequest.IdleDuration` and `Run.IdleDuration` are
+  `*time.Duration`: a WAKE sends an explicit `&0`, a SLEEP re-sends whatever the active run
+  STORED — including nothing, for any run created by squall <= v0.1.4. dstack refuses an
+  active run whose submitted spec differs beyond replicas, the sleep path never acts on that
+  refusal (`1->0` fails safe), and the GPU then bills forever. The fleet path
+  (`FleetSpec.IdleDuration`) is unaffected and still always sends an explicit 0. **Anything
+  else added to `configurationWire` must be sent by direction too.**
 
 ## The wire shape is MEASURED — treat this file as the map
 
@@ -62,7 +79,10 @@ What actually matters when you touch this package:
 Reproduces five source-verified behaviours: F17 (in-place replica flip), F18 (apply CAS, and
 force refused unconditionally), F20 (run id survives flips but not terminal states — dead ≠
 asleep), F21 (runs land on fleets; the instance is released by fleet `idle_duration`, not by
-the flip), F23 (gateway answers immediately: 503 / 404 / 403, and never wakes a service).
+the flip), the override refusal (an apply against an ACTIVE run whose submitted
+`idle_duration` differs from the stored one is HTTP 400 "Cannot override active run" —
+D156/D170; every configuration field the fake learns to decode must join that comparison or
+the guard goes quiet), F23 (gateway answers immediately: 503 / 404 / 403, and never wakes a service).
 
 - Two call surfaces, one state machine: every exported method is directly callable, and
   `Handler()` mounts the same `Server` behind `net/http`. There is no second implementation
