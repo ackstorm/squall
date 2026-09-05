@@ -95,7 +95,7 @@ type configurationWire struct {
 	Backends     []string          `json:"backends,omitempty"`
 	Regions      []string          `json:"regions,omitempty"`
 	MaxPrice     string            `json:"max_price,omitempty"`
-	IdleDuration string            `json:"idle_duration,omitempty"`
+	IdleDuration *int              `json:"idle_duration,omitempty"`
 	MaxDuration  string            `json:"max_duration,omitempty"`
 }
 
@@ -105,6 +105,23 @@ func dstackDuration(d time.Duration) string {
 		return ""
 	}
 	return fmt.Sprintf("%ds", int64(d/time.Second))
+}
+
+// dstackSeconds renders a duration as dstack's whole-second integer form.
+//
+// It returns a NON-NIL pointer for a zero duration on purpose. Zero is a
+// meaningful value — "release on the first idle pass" — and it has to reach
+// the wire, while a nil pointer means "unset" and lets dstack apply its own
+// defaults: DEFAULT_RUN_TERMINATION_IDLE_TIME = 5m and
+// DEFAULT_FLEET_TERMINATION_IDLE_TIME = 3d (core/models/profiles.py). The
+// string form with `omitempty` could not express that difference, which is
+// how a Go zero came to mean "three days of paid idle instance" (D166).
+func dstackSeconds(d time.Duration) *int {
+	if d < 0 {
+		d = 0
+	}
+	s := int(d / time.Second)
+	return &s
 }
 
 func wireSeconds(v *int) time.Duration {
@@ -195,7 +212,7 @@ type fleetConfigurationWire struct {
 	Nodes        string        `json:"nodes"`
 	Resources    resourcesWire `json:"resources"`
 	Backends     []string      `json:"backends,omitempty"`
-	IdleDuration string        `json:"idle_duration,omitempty"`
+	IdleDuration *int          `json:"idle_duration,omitempty"`
 }
 
 // fleetSpecWire mirrors dstack's FleetSpec. Profile is a required field on

@@ -3,9 +3,11 @@
 package dstack_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -31,12 +33,16 @@ func TestHTTPClient_Apply_SendsIdleDuration(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := body["run_spec"].(map[string]any)["configuration"].(map[string]any)
-	if cfg["idle_duration"] != "600s" {
+	if cfg["idle_duration"] != float64(600) {
 		t.Fatalf("idle_duration = %v", cfg["idle_duration"])
 	}
 }
 
-func TestHTTPClient_Apply_OmitsIdleDurationWhenZero(t *testing.T) {
+// TestHTTPClient_Apply_SendsIdleDurationWhenZero used to be
+// TestHTTPClient_Apply_OmitsIdleDurationWhenZero: before D166 an absent key
+// meant "apply dstack's own default", which is exactly the footgun this
+// change removes. A Go zero must now reach the wire as an explicit 0.
+func TestHTTPClient_Apply_SendsIdleDurationWhenZero(t *testing.T) {
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == getPlanPath {
@@ -52,8 +58,75 @@ func TestHTTPClient_Apply_OmitsIdleDurationWhenZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := body["run_spec"].(map[string]any)["configuration"].(map[string]any)
-	if _, ok := cfg["idle_duration"]; ok {
-		t.Fatalf("idle_duration unexpectedly present")
+	if cfg["idle_duration"] != float64(0) {
+		t.Fatalf("idle_duration = %v, want 0", cfg["idle_duration"])
+	}
+}
+
+// TestHTTPClient_Apply_SendsExplicitIdleDurationZero is D166's guard. A Go
+// zero used to serialize as an ABSENT key, and dstack reads an absent
+// idle_duration as "apply my default" — 5m for a run, 3d for a fleet. The
+// assertion is on raw bytes on purpose: unmarshalling into a struct with a
+// *int field cannot tell "sent 0" from "sent nothing".
+func TestHTTPClient_Apply_SendsExplicitIdleDurationZero(t *testing.T) {
+	var planBody []byte
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case getPlanPath:
+			planBody, _ = io.ReadAll(r.Body)
+			_, _ = w.Write([]byte(`{"run_spec":{},"current_resource":null,"action":"create"}`))
+		case "/api/project/main/runs/apply":
+			_, _ = w.Write([]byte(`{"id":"abc","jobs":[],"run_spec":{"configuration":{"replicas":{"min":1,"max":1}}}}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
+	if _, err := c.Apply(context.Background(), dstack.ApplyRequest{
+		Name: "qwen", Replicas: 1, Image: "img", Port: 8080, IdleDuration: 0,
+	}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if !bytes.Contains(planBody, []byte(`"idle_duration":0`)) {
+		t.Fatalf("run plan body does not carry an explicit idle_duration: 0.\n"+
+			"An absent key makes dstack apply its own 5m run default (D166).\nbody = %s", planBody)
+	}
+}
+
+// TestHTTPClient_EnsureFleet_SendsExplicitIdleDurationZero is the same
+// guard on the fleet path, where the default squall would inherit is
+// THREE DAYS of paid idle instance.
+func TestHTTPClient_EnsureFleet_SendsExplicitIdleDurationZero(t *testing.T) {
+	var planBody []byte
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/project/main/fleets/get":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"detail":[{"code":"resource_not_exists"}]}`))
+		case "/api/project/main/fleets/get_plan":
+			planBody, _ = io.ReadAll(r.Body)
+			_, _ = w.Write([]byte(`{"spec":{"configuration":{"type":"fleet","name":"squall-auto-vastai","nodes":"0.."}}}`))
+		case "/api/project/main/fleets/apply":
+			_, _ = w.Write([]byte(`{"id":"f1","name":"squall-auto-vastai"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
+	if err := c.EnsureFleet(context.Background(), dstack.FleetSpec{
+		Name: "squall-auto-vastai", Backends: []string{"vastai"}, IdleDuration: 0,
+	}); err != nil {
+		t.Fatalf("EnsureFleet: %v", err)
+	}
+
+	if !bytes.Contains(planBody, []byte(`"idle_duration":0`)) {
+		t.Fatalf("fleet plan body does not carry an explicit idle_duration: 0.\n"+
+			"An absent key makes dstack apply its own THREE DAY fleet default (D166).\nbody = %s", planBody)
 	}
 }
 

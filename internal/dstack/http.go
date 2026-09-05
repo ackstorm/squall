@@ -226,7 +226,7 @@ func (c *HTTPClient) createFleet(ctx context.Context, spec FleetSpec) error {
 				Nodes:        "0..",
 				Resources:    fleetFloorResources,
 				Backends:     spec.Backends,
-				IdleDuration: dstackDuration(spec.IdleDuration),
+				IdleDuration: dstackSeconds(spec.IdleDuration),
 			},
 		},
 	})
@@ -266,7 +266,7 @@ func runSpec(req ApplyRequest) runSpecWire {
 			Backends:     req.Placement.Backends,
 			Regions:      req.Placement.Regions,
 			MaxPrice:     req.Placement.MaxPrice,
-			IdleDuration: dstackDuration(req.IdleDuration),
+			IdleDuration: dstackSeconds(req.IdleDuration),
 			MaxDuration:  dstackDuration(req.MaxDuration),
 		},
 	}
