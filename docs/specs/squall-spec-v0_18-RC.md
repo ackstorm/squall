@@ -885,8 +885,9 @@ suppressed per §10; 48 h without model traffic. Pass criteria are measured on
 **instances and invoices, not replica counts** (F21), and scoped to
 **model-serving GPU capacity** — the platform baseline (gateway EC2, dstack
 server) is accounted separately and is expected to persist: fleet instances
-terminate within their explicit `fleet.idleDuration` of the last flip to 0 —
-verified per backend,
+terminate promptly after the flip to 0 — squall always sends dstack an
+explicit `idle_duration: 0` (D166), so there is no idle window left to wait
+out; measured at 24 s on Vast.ai (D165) — verified per backend,
 including Vast's container-based instances — and the external capacity
 invoice for the window is zero.
 
@@ -957,8 +958,9 @@ LiteLLM API.
 4. 50-request cold burst → exactly 1 effective reconciler-owned wake action
    and exactly one resulting run/bill (PoC 3).
 5. 48 h without model traffic → **model-serving GPU capacity cost = 0**,
-   verified at the instance layer: fleet instances terminate within their
-   explicit `fleet.idleDuration` (F21); replica count alone proves nothing.
+   verified at the instance layer: fleet instances terminate promptly after
+   the flip to 0, because squall always sends `idle_duration: 0` (F21, D166;
+   measured 24 s on Vast.ai, D165); replica count alone proves nothing.
    The platform baseline (gateway, dstack server) is accounted separately —
    the AC is about capacity, not about the control plane being free.
 6. Deletion — `kubectl` or Flux prune — tears down through the finalizer
@@ -1053,7 +1055,7 @@ deletion via finalizer, and orphan reconciliation. Nothing else.
 squall-proxy owns: the per-request decision and the honest wait. Nothing else.
 alitellm-operator owns: LiteLLM, as it always did.
 dstack owns: providers, offers, run execution, instance lifecycle via fleets
-(explicit `idleDuration` always), tunnels, ingress.
+(an explicit `idle_duration: 0` always), tunnels, ingress.
 The engine owns tokens.
 
 Squall's custom footprint is therefore:
