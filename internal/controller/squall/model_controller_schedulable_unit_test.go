@@ -256,7 +256,7 @@ func TestReconcile_InvalidPrice_DoesNotBlockSleep(t *testing.T) {
 	bad := squallv1alpha1.Price("cheap")
 	spec := exampleModelSpec()
 	spec.MinReplicas = 0
-	spec.ScaleDownDelaySeconds = 1
+	spec.IdleTimeout = metav1.Duration{Duration: time.Second}
 	spec.Placement.MaxPricePerHour = &bad
 	model := &squallv1alpha1.Model{
 		ObjectMeta: metav1.ObjectMeta{Name: "sleep-bad-price", Namespace: "default", Finalizers: []string{ModelFinalizer}},
@@ -264,7 +264,7 @@ func TestReconcile_InvalidPrice_DoesNotBlockSleep(t *testing.T) {
 	}
 
 	// Clean, complete, idle activity evidence aged well past
-	// ScaleDownDelaySeconds — sleepDue's condition (phase.go) for the
+	// idleTimeout — sleepDue's condition (phase.go) for the
 	// 1->0 flip.
 	idle := activityServer(t, squallv1alpha1.ActivityReport{
 		Models: map[string]squallv1alpha1.ModelActivity{

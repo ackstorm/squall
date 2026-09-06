@@ -21,7 +21,7 @@ import (
 // proxy replica reporting current traffic and a last success older than the
 // window, and whatever failure count the case is about.
 //
-// ScaleDownDelaySeconds is deliberately HUGE. It does three things at once and
+// IdleTimeout is deliberately HUGE. It does three things at once and
 // all three matter: the idle flip cannot fire (the newest request is not aged
 // past it), traffic reads as current to unhealthyDue, and Ready is satisfied by
 // freshSuccess — evidence (b) — so the test needs no probe-delay clock
@@ -32,7 +32,7 @@ func unhealthyFixture(t *testing.T, name string, failures int, unhealthyAfter ti
 
 	spec := exampleModelSpec()
 	spec.MinReplicas = 0
-	spec.ScaleDownDelaySeconds = 3600
+	spec.IdleTimeout = metav1.Duration{Duration: 3600 * time.Second}
 	spec.Health = squallv1alpha1.ModelHealth{
 		UnhealthyAfter:   metav1.Duration{Duration: unhealthyAfter},
 		FailureThreshold: 3,

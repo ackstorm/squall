@@ -16,9 +16,12 @@ Last reviewed: 2026-09-02.
       produced D130 and D135. Superseded detail: Verify, against a real GPU, the two things fixed today:
       the idle flip (D91) and the unhealthy teardown (D95). Full battery in
       `docs/plans/2026-08-31-unhealthy-replica-teardown.md` Task 6.
-      **Hazard to watch:** `provisioningTimeout` has no destructive trigger (D97), so a wake
-      that hangs is not bounded by squall. dstack's own probe-failure path and
-      `fleet.idleDuration: 10m` are the only backstops. Do not leave it unattended.
+      **Hazard superseded 2026-09-05:** D97 is closed. `provisioningTimeout` now has a
+      destructive trigger — `provisioningDue` (`internal/controller/squall/phase.go`) returns
+      **Dead** with `Apply, Replicas: 0`, so a wake that hangs IS bounded by squall, and with
+      the single idle window the instance is released immediately rather than after a fleet
+      idle window (measured 24 s, D165). The old `fleet.idleDuration: 10m` backstop no longer
+      exists and is no longer needed.
 
 ## Done today (2026-08-31)
 
@@ -158,7 +161,11 @@ Ordered by what unblocks what. Nothing here is optional for the release.
       never reaches Ready is now destroyed, alarmed, and marked **Dead** (not Asleep: the run
       never became usable, so the next attempt must mint a fresh one).
 
-- [ ] **D101 probe — does an intervening wake reset the fleet idle timer?** Measured 2026-08-31: with
+- [x] **D101 probe — MOOT 2026-09-05.** The single-idle-window change removed the tunable fleet
+      idle window entirely: squall now always sends `idle_duration: 0`, so there is no timer left
+      to reset and no `idleDuration` left to tune. The hazard it guarded (a request arriving just
+      before the window closes) cannot occur. Historical measurement kept below.
+      Measured 2026-08-31: with
       `fleet.idleDuration: 2m`, an instance died 117s after the FIRST Asleep despite being woken and reused
       (same Vast id) at 64s. If the timer does not reset, a request arriving at 1:59 gets a GPU that dies a
       second later. Probe: wake deliberately at ~1:50 into the idle window, see whether the machine

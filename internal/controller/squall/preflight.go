@@ -5,7 +5,6 @@ package squall
 import (
 	"context"
 	"fmt"
-	"time"
 
 	squallv1alpha1 "github.com/ackstorm/squall/api/squall/v1alpha1"
 	"github.com/ackstorm/squall/internal/dstack"
@@ -42,7 +41,7 @@ type preflightClient interface {
 // failed EnsureFleet — yields no BLOCKING behaviour; it only downgrades that
 // one backend to "unfleeted" so the Schedulable condition can say so. A
 // diagnostic (and its remediation) must never be what stops a wake.
-func preflight(ctx context.Context, c preflightClient, backends []string, idle time.Duration) (reason, message string, fleets []squallv1alpha1.FleetStatus) {
+func preflight(ctx context.Context, c preflightClient, backends []string) (reason, message string, fleets []squallv1alpha1.FleetStatus) {
 	if len(backends) == 0 {
 		// "Any configured backend" — nothing to check against.
 		return "", "", nil
@@ -69,9 +68,12 @@ func preflight(ctx context.Context, c preflightClient, backends []string, idle t
 			// already exists by this name is left untouched, so replaying
 			// this on every reconcile is safe.
 			if err := c.EnsureFleet(ctx, dstack.FleetSpec{
-				Name:         dstack.FleetName(b),
-				Backends:     []string{b},
-				IdleDuration: idle,
+				Name:     dstack.FleetName(b),
+				Backends: []string{b},
+				// Zero, always: an auto-created fleet must never keep a
+				// warm instance, and an ABSENT idle_duration would inherit
+				// dstack's three-day default (D166).
+				IdleDuration: 0,
 			}); err != nil {
 				unfleeted = append(unfleeted, b)
 				fleets = append(fleets, squallv1alpha1.FleetStatus{Backend: b, Name: dstack.FleetName(b), State: squallv1alpha1.FleetStateUnfleeted})

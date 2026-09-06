@@ -173,8 +173,8 @@ load-bearing for this design:
 | F18 | `apply_plan` enforces optimistic concurrency: an apply computed against changed state fails ("Resource has been changed. Try again or use force apply") unless `force=True` | source: `server/services/runs/__init__.py:676` (verified in source) |
 | F19 | Gateway-less services are proxied by the dstack **server itself** at `/proxy/services/{project}/{run}/` — a second front path | source: `server/services/services/__init__.py` |
 | F20 | The run id survives flips (`deployment_num`++ in place) but **not terminal states**: a terminal run is **deregistered from the gateway (404, not 503)** and the next apply falls through `apply_plan`'s `is_finished()` branch into `submit_run`, minting a **new run id**. Dead ≠ asleep | measured (PoC 0-CPU) + source: `runs/__init__.py` is_finished branches |
-| F21 | Runs land on **fleets**; with no matching fleet the run fails (`failed_to_start_due_to_no_capacity`). Flipping `replicas` to 0 terminates the **job** but the **instance** is released only by fleet `idle_duration` — defaults are `5m` for runs and **`3d` for fleets**; on reuse the fleet's value applies, on fresh provisioning the shorter of the two | measured (319 s release with 5m set) + source: `core/models/profiles.py` |
-| F21b | **"Only applied for VM-based backends" is a hard gate, not a caveat: on a non-dockerized backend `idle_duration` is never read.** `_create_instance_model_for_job` branches on `job_provisioning_data.dockerized` — false forces `termination_idle_time = 0` (release on the first pass after the job stops) and only the true branch calls `get_termination(profile, ...)`. `dockerized=True` on AWS ("because `dstack-shim` is used"); **`False` on Vast.ai and on Kubernetes**. So on both backends squall ships against there is **no warm pool**: every wake is a full cold provision, and `idle_duration: -1` (`DONT_DESTROY`) is unreachable too. §7's warm-window premise holds only on VM backends — see D158 | source: `vastai/compute.py:173`, `kubernetes/compute.py:339`, `aws/compute.py:418`, `jobs_submitted.py:1793`, `instances/check.py:92` |
+| F21 | Runs land on **fleets**; with no matching fleet the run fails (`failed_to_start_due_to_no_capacity`). Flipping `replicas` to 0 terminates the **job** but the **instance** is released only by fleet `idle_duration` — defaults are `5m` for runs and **`3d` for fleets**; on reuse the fleet's value applies, on fresh provisioning the shorter of the two. **Since the single-idle-window change, squall always sends an explicit `idle_duration: 0` (D166), so neither default is ever reached — this is a fact about dstack, not a Model author's knob** | measured (319 s release with 5m set) + source: `core/models/profiles.py` |
+| F21b | **"Only applied for VM-based backends" is a hard gate, not a caveat: on a non-dockerized backend `idle_duration` is never read.** `_create_instance_model_for_job` branches on `job_provisioning_data.dockerized` — false forces `termination_idle_time = 0` (release on the first pass after the job stops) and only the true branch calls `get_termination(profile, ...)`. `dockerized=True` on AWS ("because `dstack-shim` is used"); **`False` on Vast.ai and on Kubernetes**. So on both backends squall ships against there is **no warm pool**: every wake is a full cold provision, and `idle_duration: -1` (`DONT_DESTROY`) is unreachable too. §7's warm-window premise holds only on VM backends — see D158. **Moot since the single-idle-window change: squall sends `idle_duration: 0` on every backend regardless of `dockerized`, so the dockerized branch is never the one that matters** | source: `vastai/compute.py:173`, `kubernetes/compute.py:339`, `aws/compute.py:418`, `jobs_submitted.py:1793`, `instances/check.py:92` |
 | F22 | The gateway dials **out** to the replica (SSH local forward of the replica's `localhost:app_port` onto a gateway Unix socket) using the **project private key resident on the gateway**. Replicas never initiate toward the gateway; a private gateway needs no public IP and no certificate. Marketplace data path = outbound TCP/22 from the gateway | source: `proxy/lib/services/service_connection.py` (verified) + measured |
 | F23 | Gateway responses are immediate (~10–20 ms), never held: registered + 0 replicas + auth → **503**; unregistered/terminal → **404**; bad/missing token → **403**. The gateway never wakes a `ManualScaler` service | measured (PoC 0-CPU) |
 | F24 | A `certificate: null` gateway requires `https: false` on every service; the server refuses otherwise | measured (PoC 0-CPU) |
@@ -237,9 +237,7 @@ spec:
     maxPricePerHour: 0.80           # the cost control: enforced before provisioning
   minReplicas: 0                    # 0 = on-demand flip; 1 = PINNED (never sleeps)
   holdTimeout: 20m                  # 0 = answer immediately (router falls back)
-  scaleDownDelaySeconds: 300        # job-layer idle → replicas 0 (§6)
-  fleet:
-    idleDuration: 10m               # machine release; MANDATORY — default is 3d (F21)
+  idleTimeout: 5m                   # the ONE idle window: releases job AND machine (§6)
   drainTimeout: 120s
   provisioningTimeout: 45m          # the one destructive safety (§5.2)
   maxLifetime: 168h                 # ALERT-ONLY; exported as a metric pair (§10)
@@ -262,13 +260,17 @@ Validation (webhook/CEL), enforced not documented:
 - Deadlines are ordered: `holdTimeout ≤ provisioningTimeout`, and PoC 10
   verifies the external router profile's `timeout`/`stream_timeout` ≥
   `holdTimeout` (F28, F32).
-- Warn when `holdTimeout` is set but the warm window
-  (`scaleDownDelaySeconds` + `fleet.idleDuration`) is short enough that most
-  wakes will pay a full cold start — a hold that habitually waits out
-  provisioning is a misconfiguration in all but intent.
+- Reject `idleTimeout <= 0` and `provisioningTimeout <= 0`: the first makes an
+  on-demand Model permanently unwakeable (it is also `hasDemand`'s TTL), the
+  second removes the primary bound on a run that never reaches Ready.
+- Warn when `holdTimeout` is short enough that most wakes — which are always
+  a full cold start, on every backend — cannot finish inside it:
+  `holdTimeout < provisioningTimeout / 2`. Coarse and named as a heuristic;
+  it is the threshold that separates a measured 9m53s cold start against a
+  30m `provisioningTimeout` from a `holdTimeout` short enough to answer
+  `503` to every cold request.
 - `minReplicas: 1` disables the idle flip; `maxLifetime` stays — it is
   precisely the safety net for a pinned GPU everyone forgot.
-- `fleet.idleDuration` is required; there is no default (F21's 3-day trap).
 - `scaling:`-style fields do not exist in the CRD at all.
 
 ### 5.2 Controller contract
@@ -367,30 +369,37 @@ AWS → g5/g6e (G-family — F29 closed the P-family question), DO → L40S.
 running → engine health OK → warmup done → Ready → proxy forwards
         │
         ▼                    (later)
-in-flight == 0 and last request older than scaleDownDelaySeconds
+in-flight == 0 and last request older than idleTimeout
                                              [skipped when pinned]
         │
         ▼
 controller: ONE in-place apply replicas: 0 → Asleep, still addressable
-(the fleet releases the machine after fleet.idleDuration — F21)
+(squall always sends dstack idle_duration: 0, so the machine is released
+ with the job, on every backend — F21, F21b)
 ```
 
-**Scale-to-zero is two-layered, and every timing is an explicit CR field:**
+**Scale-to-zero has ONE window, and it is one explicit CR field:**
 
 | Knob | Layer | Releases | The next wake pays |
 |---|---|---|---|
-| `scaleDownDelaySeconds` | job (`replicas`→0, controller flip) | the **job** | engine reload from local disk |
-| `fleet.idleDuration` | instance (fleet, dstack) | the **machine** | provisioning + image + weights |
+| `idleTimeout` | job + instance (controller flip, and dstack via `idle_duration: 0`) | **the job and the machine** | provisioning + image + weights |
 | `holdTimeout` | proxy | nothing | bounds the wait, not the capacity |
 
-Flipping to 0 does **not** release the instance; the fleet does, after its
-explicit `idleDuration`. The surviving instance is the **warm pool**: a wake
-inside it skips provisioning and image pull, so `idleDuration` is the
-cost-versus-wake-latency dial and directly conditions §7 (`hold` is only
-viable inside the warm window — hence the validation rule in §5.1).
-Per-backend caveat to verify in PoC: idle release is documented "only for
-VM-based backends" (F21) — confirm semantics on Vast's container instances
-and on DO before trusting the dial there.
+Flipping to 0 releases the instance too: squall always sends dstack an
+explicit `idle_duration: 0` (D166), on every backend, so there is no
+surviving warm pool for a later wake to skip provisioning against. A
+CR that named two windows here through v0.18 — `scaleDownDelaySeconds` for
+the job and `fleet.idleDuration` for the instance — billed identically
+either way, since the instance is rented for as long as either window
+holds it: the first just kept the weights in VRAM and answered instantly,
+the second only kept an empty machine and needed the engine restarted and
+the weights reloaded. That first window **dominates** the second at equal
+price — there is no traffic pattern where moving time from it into the
+second helps — so the whole budget now lives in `idleTimeout`, the window
+squall controls precisely and gates on in-flight evidence. See
+`docs/plans/2026-09-05-single-idle-window-design.md` for the full argument
+and the measurement that closed it (D165: a run flipped to zero replicas
+while still provisioning released its instance in 24 seconds).
 
 **Idle signal: the proxy, aggregated correctly across replicas.** Each proxy
 replica carries per-model `inFlight` and `lastRequestAt` as a side effect of
@@ -400,7 +409,7 @@ Kubernetes-native: every replica exposes those two values per model on an
 internal endpoint; the controller enumerates the proxy Service's Endpoints
 and requires a **complete, fresh answer from every replica**. Sleep fires
 only when all replicas report `inFlight == 0` and the newest
-`lastRequestAt` is older than `scaleDownDelaySeconds`. Any replica
+`lastRequestAt` is older than `idleTimeout`. Any replica
 unreachable, stale, or ambiguous → **stay awake**.
 
 > **Wake may tolerate uncertainty; sleep must not.** Paying for a GPU a
@@ -876,8 +885,9 @@ suppressed per §10; 48 h without model traffic. Pass criteria are measured on
 **instances and invoices, not replica counts** (F21), and scoped to
 **model-serving GPU capacity** — the platform baseline (gateway EC2, dstack
 server) is accounted separately and is expected to persist: fleet instances
-terminate within their explicit `fleet.idleDuration` of the last flip to 0 —
-verified per backend,
+terminate promptly after the flip to 0 — squall always sends dstack an
+explicit `idle_duration: 0` (D166), so there is no idle window left to wait
+out; measured at 24 s on Vast.ai (D165) — verified per backend,
 including Vast's container-based instances — and the external capacity
 invoice for the window is zero.
 
@@ -948,8 +958,9 @@ LiteLLM API.
 4. 50-request cold burst → exactly 1 effective reconciler-owned wake action
    and exactly one resulting run/bill (PoC 3).
 5. 48 h without model traffic → **model-serving GPU capacity cost = 0**,
-   verified at the instance layer: fleet instances terminate within their
-   explicit `fleet.idleDuration` (F21); replica count alone proves nothing.
+   verified at the instance layer: fleet instances terminate promptly after
+   the flip to 0, because squall always sends `idle_duration: 0` (F21, D166;
+   measured 24 s on Vast.ai, D165); replica count alone proves nothing.
    The platform baseline (gateway, dstack server) is accounted separately —
    the AC is about capacity, not about the control plane being free.
 6. Deletion — `kubectl` or Flux prune — tears down through the finalizer
@@ -1044,7 +1055,7 @@ deletion via finalizer, and orphan reconciliation. Nothing else.
 squall-proxy owns: the per-request decision and the honest wait. Nothing else.
 alitellm-operator owns: LiteLLM, as it always did.
 dstack owns: providers, offers, run execution, instance lifecycle via fleets
-(explicit `idleDuration` always), tunnels, ingress.
+(an explicit `idle_duration: 0` always), tunnels, ingress.
 The engine owns tokens.
 
 Squall's custom footprint is therefore:

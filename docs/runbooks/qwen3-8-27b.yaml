@@ -19,14 +19,12 @@ spec:
   drainTimeout: 60s
   maxLifetime: 168h
   provisioningTimeout: 30m
-  scaleDownDelaySeconds: 300
+  idleTimeout: 5m
   # New 2026-08-31. Both halves are the CRD defaults; stated explicitly because
   # this Model is the thing being tested.
   health:
     unhealthyAfter: 15m
     failureThreshold: 3
-  fleet:
-    idleDuration: 10m
   probe:
     path: /health
     interval: 10s

@@ -16,14 +16,14 @@ func TestSleepDue_UsesTheDurableAnchorWhenNoReplicaHasData(t *testing.T) {
 	now := time.Now()
 	ev := &ActivityEvidence{Complete: true, AllIdle: true}
 	stale := metav1.NewTime(now.Add(-10 * time.Minute))
-	if !sleepDue(ev, &stale, 120, now) {
+	if !sleepDue(ev, &stale, 120*time.Second, now) {
 		t.Fatal("stale durable anchor must permit sleep")
 	}
 	fresh := metav1.NewTime(now.Add(-30 * time.Second))
-	if sleepDue(ev, &fresh, 120, now) {
+	if sleepDue(ev, &fresh, 120*time.Second, now) {
 		t.Fatal("fresh durable anchor must block sleep")
 	}
-	if sleepDue(ev, nil, 120, now) {
+	if sleepDue(ev, nil, 120*time.Second, now) {
 		t.Fatal("missing durable anchor must block sleep")
 	}
 }
@@ -37,7 +37,7 @@ func TestSleepDue_WakeSeedsTheAnchor(t *testing.T) {
 	ev := &ActivityEvidence{Complete: true, AllIdle: true, AnyData: false}
 	woke := metav1.NewTime(now.Add(-10 * time.Minute))
 
-	if !sleepDue(ev, &woke, 120, now) {
+	if !sleepDue(ev, &woke, 120*time.Second, now) {
 		t.Fatal("woke 10 minutes ago, never served a request: must sleep, not bill forever")
 	}
 }
@@ -46,7 +46,7 @@ func TestSleepDue_LiveDataWinsOverTheDurableAnchor(t *testing.T) {
 	now := time.Now()
 	ev := &ActivityEvidence{Complete: true, AllIdle: true, AnyData: true, NewestLastRequestAt: now.Add(-10 * time.Second)}
 	ancient := metav1.NewTime(now.Add(-3 * time.Hour))
-	if sleepDue(ev, &ancient, 120, now) {
+	if sleepDue(ev, &ancient, 120*time.Second, now) {
 		t.Fatal("live data must win over durable anchor")
 	}
 }
@@ -54,25 +54,25 @@ func TestSleepDue_LiveDataWinsOverTheDurableAnchor(t *testing.T) {
 func TestSleepDue_IncompleteEvidenceNeverSleeps(t *testing.T) {
 	now := time.Now()
 	ancient := metav1.NewTime(now.Add(-3 * time.Hour))
-	if sleepDue(&ActivityEvidence{}, &ancient, 120, now) {
+	if sleepDue(&ActivityEvidence{}, &ancient, 120*time.Second, now) {
 		t.Fatal("incomplete evidence must block sleep")
 	}
 }
 
 func TestUncontrolledTimeoutFor_Default(t *testing.T) {
 	for _, tc := range []struct {
-		delay int32
+		delay time.Duration
 		want  time.Duration
-	}{{120, 23 * time.Minute}, {900, 75 * time.Minute}, {1575, 2 * time.Hour}, {3600, 2 * time.Hour}} {
-		if got := uncontrolledTimeoutFor(squallv1alpha1.ModelSpec{ScaleDownDelaySeconds: tc.delay}); got != tc.want {
-			t.Fatalf("delay %d: got %v want %v", tc.delay, got, tc.want)
+	}{{120 * time.Second, 23 * time.Minute}, {900 * time.Second, 75 * time.Minute}, {1575 * time.Second, 2 * time.Hour}, {3600 * time.Second, 2 * time.Hour}} {
+		if got := uncontrolledTimeoutFor(squallv1alpha1.ModelSpec{IdleTimeout: metav1.Duration{Duration: tc.delay}}); got != tc.want {
+			t.Fatalf("delay %v: got %v want %v", tc.delay, got, tc.want)
 		}
 	}
 }
 
 func TestUncontrolledTimeoutFor_ExplicitZeroFallsBackToDefault(t *testing.T) {
 	zero := metav1.Duration{}
-	if got := uncontrolledTimeoutFor(squallv1alpha1.ModelSpec{ScaleDownDelaySeconds: 120, UncontrolledTimeout: &zero}); got != 23*time.Minute {
+	if got := uncontrolledTimeoutFor(squallv1alpha1.ModelSpec{IdleTimeout: metav1.Duration{Duration: 120 * time.Second}, UncontrolledTimeout: &zero}); got != 23*time.Minute {
 		t.Fatalf("got %v", got)
 	}
 }
@@ -97,7 +97,7 @@ func TestDecide_BoundMatrix(t *testing.T) {
 	now := time.Now()
 	run := &dstack.Run{Name: "m", RunID: "r1", Replicas: 1}
 	ago := func(d time.Duration) *metav1.Time { v := metav1.NewTime(now.Add(-d)); return &v }
-	spec := squallv1alpha1.ModelSpec{MinReplicas: 0, ScaleDownDelaySeconds: 120, ProvisioningTimeout: metav1.Duration{Duration: 20 * time.Minute}, Health: squallv1alpha1.ModelHealth{UnhealthyAfter: metav1.Duration{Duration: 10 * time.Minute}, FailureThreshold: 3}}
+	spec := squallv1alpha1.ModelSpec{MinReplicas: 0, IdleTimeout: metav1.Duration{Duration: 120 * time.Second}, ProvisioningTimeout: metav1.Duration{Duration: 20 * time.Minute}, Health: squallv1alpha1.ModelHealth{UnhealthyAfter: metav1.Duration{Duration: 10 * time.Minute}, FailureThreshold: 3}}
 	idle := &ActivityEvidence{Complete: true, AllIdle: true, AnyData: true, NewestLastRequestAt: now.Add(-10 * time.Minute)}
 	busy := &ActivityEvidence{Complete: true, AllIdle: false, AnyData: true, NewestLastRequestAt: now.Add(-10 * time.Minute)}
 	incomplete := &ActivityEvidence{}
@@ -379,7 +379,7 @@ func TestDecide(t *testing.T) {
 			// T7: pinned models never sleep, even with a clean idle
 			// window that would otherwise flip an on-demand model.
 			// Mutation: delete the spec.MinReplicas == 0 gate.
-			name: "pinned, replicas up, clean idle window past scaleDownDelaySeconds -> stays Ready, no sleep",
+			name: "pinned, replicas up, clean idle window past idleTimeout -> stays Ready, no sleep",
 			observed: Observed{
 				Run:   &dstack.Run{Name: "qwen", RunID: "run-1", DeploymentNum: 4, Replicas: 1},
 				Ready: true,
@@ -391,8 +391,8 @@ func TestDecide(t *testing.T) {
 			},
 			prior: squallv1alpha1.ModelStatus{Phase: squallv1alpha1.ModelPhaseReady, RunID: "run-1"},
 			spec: squallv1alpha1.ModelSpec{
-				MinReplicas:           1,
-				ScaleDownDelaySeconds: 300,
+				MinReplicas: 1,
+				IdleTimeout: metav1.Duration{Duration: 5 * time.Minute},
 			},
 			hasDemand: false,
 			wantPhase: squallv1alpha1.ModelPhaseReady,
@@ -401,10 +401,10 @@ func TestDecide(t *testing.T) {
 		},
 		{
 			// T1: clean, complete, idle evidence aged past
-			// scaleDownDelaySeconds flips an on-demand model to Asleep,
+			// idleTimeout flips an on-demand model to Asleep,
 			// in place (CAS'd on the observed DeploymentNum, same as the
 			// wake flip). hasDemand plays no part in this gate.
-			name: "on-demand, replicas up, clean idle window past scaleDownDelaySeconds -> flips to Asleep",
+			name: "on-demand, replicas up, clean idle window past idleTimeout -> flips to Asleep",
 			observed: Observed{
 				Run:   &dstack.Run{Name: "qwen", RunID: "run-1", DeploymentNum: 4, Replicas: 1},
 				Ready: true,
@@ -415,7 +415,7 @@ func TestDecide(t *testing.T) {
 				},
 			},
 			prior:        squallv1alpha1.ModelStatus{Phase: squallv1alpha1.ModelPhaseReady, RunID: "run-1"},
-			spec:         squallv1alpha1.ModelSpec{MinReplicas: 0, ScaleDownDelaySeconds: 300},
+			spec:         squallv1alpha1.ModelSpec{MinReplicas: 0, IdleTimeout: metav1.Duration{Duration: 5 * time.Minute}},
 			hasDemand:    true,
 			wantPhase:    squallv1alpha1.ModelPhaseAsleep,
 			wantApply:    true,
@@ -423,9 +423,9 @@ func TestDecide(t *testing.T) {
 			wantAlarm:    false,
 		},
 		{
-			// T1's boundary: exactly at scaleDownDelaySeconds (not yet
+			// T1's boundary: exactly at idleTimeout (not yet
 			// strictly older) must not flip.
-			name: "on-demand, idle exactly at scaleDownDelaySeconds boundary -> no flip yet",
+			name: "on-demand, idle exactly at idleTimeout boundary -> no flip yet",
 			observed: Observed{
 				Run:   &dstack.Run{Name: "qwen", RunID: "run-1", DeploymentNum: 4, Replicas: 1},
 				Ready: true,
@@ -436,7 +436,7 @@ func TestDecide(t *testing.T) {
 				},
 			},
 			prior:     squallv1alpha1.ModelStatus{Phase: squallv1alpha1.ModelPhaseReady, RunID: "run-1"},
-			spec:      squallv1alpha1.ModelSpec{MinReplicas: 0, ScaleDownDelaySeconds: 300},
+			spec:      squallv1alpha1.ModelSpec{MinReplicas: 0, IdleTimeout: metav1.Duration{Duration: 5 * time.Minute}},
 			hasDemand: false,
 			wantPhase: squallv1alpha1.ModelPhaseReady,
 			wantApply: false,
@@ -456,7 +456,7 @@ func TestDecide(t *testing.T) {
 				},
 			},
 			prior:     squallv1alpha1.ModelStatus{Phase: squallv1alpha1.ModelPhaseReady, RunID: "run-1"},
-			spec:      squallv1alpha1.ModelSpec{MinReplicas: 0, ScaleDownDelaySeconds: 300},
+			spec:      squallv1alpha1.ModelSpec{MinReplicas: 0, IdleTimeout: metav1.Duration{Duration: 5 * time.Minute}},
 			hasDemand: false,
 			wantPhase: squallv1alpha1.ModelPhaseReady,
 			wantApply: false,
@@ -472,7 +472,7 @@ func TestDecide(t *testing.T) {
 				Activity: nil,
 			},
 			prior:     squallv1alpha1.ModelStatus{Phase: squallv1alpha1.ModelPhaseReady, RunID: "run-1"},
-			spec:      squallv1alpha1.ModelSpec{MinReplicas: 0, ScaleDownDelaySeconds: 300},
+			spec:      squallv1alpha1.ModelSpec{MinReplicas: 0, IdleTimeout: metav1.Duration{Duration: 5 * time.Minute}},
 			hasDemand: false,
 			wantPhase: squallv1alpha1.ModelPhaseReady,
 			wantApply: false,
@@ -490,7 +490,7 @@ func TestDecide(t *testing.T) {
 				},
 			},
 			prior:     squallv1alpha1.ModelStatus{Phase: squallv1alpha1.ModelPhaseReady, RunID: "run-1"},
-			spec:      squallv1alpha1.ModelSpec{MinReplicas: 0, ScaleDownDelaySeconds: 300},
+			spec:      squallv1alpha1.ModelSpec{MinReplicas: 0, IdleTimeout: metav1.Duration{Duration: 5 * time.Minute}},
 			hasDemand: false,
 			wantPhase: squallv1alpha1.ModelPhaseReady,
 			wantApply: false,
@@ -552,7 +552,7 @@ func ptrTime(t time.Time) *metav1.Time { m := metav1.NewTime(t); return &m }
 func TestUnhealthyDue(t *testing.T) {
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	woke := metav1.NewTime(now.Add(-2 * time.Hour))
-	const scaleDown int32 = 300
+	const scaleDown = 300 * time.Second
 	const after = 15 * time.Minute
 
 	tests := []struct {
@@ -695,8 +695,8 @@ func TestDecide_UnhealthyFlipsToZeroAndReportsWhy(t *testing.T) {
 		RunID: "run-1", Phase: squallv1alpha1.ModelPhaseReady, WakeStartedAt: &woke,
 	}
 	spec := squallv1alpha1.ModelSpec{
-		MinReplicas:           0,
-		ScaleDownDelaySeconds: 300,
+		MinReplicas: 0,
+		IdleTimeout: metav1.Duration{Duration: 5 * time.Minute},
 		Health: squallv1alpha1.ModelHealth{
 			UnhealthyAfter:   metav1.Duration{Duration: 15 * time.Minute},
 			FailureThreshold: 3,
@@ -740,8 +740,8 @@ func TestDecide_IdleSleepIsNotReportedAsUnhealthy(t *testing.T) {
 	}
 	prior := squallv1alpha1.ModelStatus{RunID: "run-1", Phase: squallv1alpha1.ModelPhaseReady, WakeStartedAt: &woke}
 	spec := squallv1alpha1.ModelSpec{
-		MinReplicas:           0,
-		ScaleDownDelaySeconds: 300,
+		MinReplicas: 0,
+		IdleTimeout: metav1.Duration{Duration: 5 * time.Minute},
 		Health: squallv1alpha1.ModelHealth{
 			UnhealthyAfter:   metav1.Duration{Duration: 15 * time.Minute},
 			FailureThreshold: 3,
@@ -775,13 +775,13 @@ func TestSleepDue_ReWakeDoesNotSleepMidWake(t *testing.T) {
 
 	// The previous cycle's last request, long past the 2-minute delay.
 	stale := metav1.NewTime(now.Add(-3 * time.Hour))
-	if !sleepDue(ev, &stale, 120, now) {
+	if !sleepDue(ev, &stale, 120*time.Second, now) {
 		t.Fatal("precondition: a 3h-old anchor with no live data must otherwise sleep")
 	}
 
 	// After the wake advanced it, the same evidence must NOT sleep.
 	woke := metav1.NewTime(now.Add(-5 * time.Second))
-	if sleepDue(ev, &woke, 120, now) {
+	if sleepDue(ev, &woke, 120*time.Second, now) {
 		t.Fatal("woke 5s ago and nothing has been forwarded yet: sleeping here " +
 			"kills the wake that a held request is still waiting on")
 	}
@@ -869,5 +869,40 @@ func TestDecide_ProvisioningBackoffPacesRecreate(t *testing.T) {
 				t.Errorf("Replicas = %d, want 1", action.Replicas)
 			}
 		})
+	}
+}
+
+// TestDecide_SleepsARunThatNeverReachedReady exists to stop a rejected
+// design from being reintroduced. A gate making sleepDue inapplicable to a
+// never-Ready run was approved and then withdrawn on live evidence (D165):
+// a client still waiting already keeps inFlight > 0, so AllIdle is false
+// and such a wake cannot be slept; and in the only case the gate would
+// change — nobody waiting — it would leave an abandoned wake's instance
+// running until provisioningTimeout. A client that abandons cancelling its
+// own wake is correct, thrifty behaviour.
+func TestDecide_SleepsARunThatNeverReachedReady(t *testing.T) {
+	now := time.Now()
+	spec := exampleModelSpec()
+	spec.MinReplicas = 0
+	spec.IdleTimeout = metav1.Duration{Duration: 2 * time.Minute}
+	spec.ProvisioningTimeout = metav1.Duration{Duration: 30 * time.Minute}
+
+	observed := Observed{
+		Run:   &dstack.Run{RunID: "r1", Replicas: 1},
+		Ready: false, // never served
+		Activity: &ActivityEvidence{
+			Complete: true, AnyData: true, AllIdle: true,
+			NewestLastRequestAt: now.Add(-5 * time.Minute),
+		},
+	}
+	prior := squallv1alpha1.ModelStatus{
+		RunID:         "r1",
+		WakeStartedAt: &metav1.Time{Time: now.Add(-6 * time.Minute)},
+	}
+
+	phase, action := Decide(observed, prior, spec, false, now)
+	if phase != squallv1alpha1.ModelPhaseAsleep || !action.Apply || action.Replicas != 0 {
+		t.Fatalf("Decide() = %s %+v; a never-Ready run with complete idle evidence and an "+
+			"expired anchor MUST still sleep — see D165", phase, action)
 	}
 }

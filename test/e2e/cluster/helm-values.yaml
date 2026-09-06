@@ -41,9 +41,9 @@ proxy:
     namespace: squall
     demandCooldown: 1s
     # LIVE-3, corrected: no override needed. The proxy now derives its
-    # per-hold refresh cadence from EACH Model's own scaleDownDelaySeconds
+    # per-hold refresh cadence from EACH Model's own idleTimeout
     # (internal/proxy.refreshIntervalFor), not from one proxy-wide setting —
-    # this fixture's own scaleDownDelaySeconds is 2s (03-fixtures/model.yaml),
+    # this fixture's own idleTimeout is 2s (03-fixtures/model.yaml),
     # which derives to 500ms (2s/10 floored at 500ms) automatically. A flat
     # SQUALL_DEMAND_REFRESH_INTERVAL override here previously stood in for
     # that per-Model value; removing it is the proof the derivation is

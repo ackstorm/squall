@@ -104,11 +104,11 @@ spec:
   minReplicas: 0
   # Weights are several hundred GB to a marketplace host: the first wake
   # will be long. Both values are guesses until measured (same caveat the
-  # qwen sample carried before its verified run).
+  # qwen sample carried before its verified run). There is no warm pool on
+  # any backend — squall always tells dstack idle_duration: 0 — so
+  # holdTimeout must cover a full cold start on every wake.
   holdTimeout: 30m
   provisioningTimeout: 45m
-  scaleDownDelaySeconds: 300
-  fleet:
-    idleDuration: 10m
+  idleTimeout: 5m
   drainTimeout: 60s
   maxLifetime: 168h

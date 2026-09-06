@@ -145,7 +145,7 @@ proxy:
     demandCooldown: ""
     # demandRefreshInterval is now only a CEILING (LIVE-3, corrected), not
     # the refresh cadence itself: the proxy derives the actual per-hold
-    # interval from EACH Model's own spec.scaleDownDelaySeconds
+    # interval from EACH Model's own spec.idleTimeout
     # (internal/proxy.refreshIntervalFor — 1/10 of it, floored at 500ms so a
     # short TTL cannot spin the API server, clamped to this ceiling so a
     # long TTL still refreshes often enough to be safe). One proxy serves
@@ -153,7 +153,7 @@ proxy:
     # could only be tuned for one Model's TTL at a time, and a real 300s
     # Model once inherited a value tuned for a 2s test fixture, 600x too
     # fast. Leave this empty for cmd/proxy's own default (30s, a wide margin
-    # over the representative 300s scaleDownDelaySeconds in config/samples);
+    # over the representative 5m idleTimeout in config/samples);
     # only raise it to bound staleness further for models with very long
     # TTLs.
     demandRefreshInterval: ""

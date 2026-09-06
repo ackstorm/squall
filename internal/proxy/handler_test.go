@@ -710,46 +710,46 @@ func TestServeHTTP_UnschedulableStillSignalsDemand(t *testing.T) {
 }
 
 // TestRefreshIntervalFor is LIVE-3, corrected: the refresh cadence must be
-// derived per-Model from scaleDownDelaySeconds, not from one proxy-wide
+// derived per-Model from idleTimeout, not from one proxy-wide
 // constant — a single flat interval cannot be right for every Model at once
 // (measured live: a 300s production Model and a 2s e2e fixture disagreed
 // about their TTL in the same cluster).
 func TestRefreshIntervalFor(t *testing.T) {
 	tests := []struct {
-		name                  string
-		scaleDownDelaySeconds int32
-		ceiling               time.Duration
-		want                  time.Duration
+		name        string
+		idleTimeout time.Duration
+		ceiling     time.Duration
+		want        time.Duration
 	}{
 		{
-			name:                  "e2e fixture's 2s TTL floors to 500ms, reproducing the former hand-tuned override",
-			scaleDownDelaySeconds: 2,
-			ceiling:               30 * time.Second,
-			want:                  500 * time.Millisecond,
+			name:        "e2e fixture's 2s TTL floors to 500ms, reproducing the former hand-tuned override",
+			idleTimeout: 2 * time.Second,
+			ceiling:     30 * time.Second,
+			want:        500 * time.Millisecond,
 		},
 		{
-			name:                  "production-representative 300s TTL derives exactly to the 1/10 fraction",
-			scaleDownDelaySeconds: 300,
-			ceiling:               30 * time.Second,
-			want:                  30 * time.Second,
+			name:        "production-representative 300s TTL derives exactly to the 1/10 fraction",
+			idleTimeout: 300 * time.Second,
+			ceiling:     30 * time.Second,
+			want:        30 * time.Second,
 		},
 		{
-			name:                  "no TTL configured (<=0) falls back to the ceiling entirely",
-			scaleDownDelaySeconds: 0,
-			ceiling:               45 * time.Second,
-			want:                  45 * time.Second,
+			name:        "no TTL configured (<=0) falls back to the ceiling entirely",
+			idleTimeout: 0,
+			ceiling:     45 * time.Second,
+			want:        45 * time.Second,
 		},
 		{
-			name:                  "very large TTL is clamped to the ceiling, never left unbounded",
-			scaleDownDelaySeconds: 36000, // 10h
-			ceiling:               time.Minute,
-			want:                  time.Minute,
+			name:        "very large TTL is clamped to the ceiling, never left unbounded",
+			idleTimeout: 36000 * time.Second, // 10h
+			ceiling:     time.Minute,
+			want:        time.Minute,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := refreshIntervalFor(tc.scaleDownDelaySeconds, tc.ceiling); got != tc.want {
-				t.Fatalf("refreshIntervalFor(%d, %v) = %v, want %v", tc.scaleDownDelaySeconds, tc.ceiling, got, tc.want)
+			if got := refreshIntervalFor(tc.idleTimeout, tc.ceiling); got != tc.want {
+				t.Fatalf("refreshIntervalFor(%v, %v) = %v, want %v", tc.idleTimeout, tc.ceiling, got, tc.want)
 			}
 		})
 	}
@@ -759,17 +759,17 @@ func TestRefreshIntervalFor(t *testing.T) {
 // ServeHTTP actually WIRES refreshIntervalFor's derivation into the hold —
 // TestRefreshIntervalFor alone only proves the pure function is right in
 // isolation, which would stay green even if ServeHTTP quietly kept passing
-// h.RefreshInterval straight through. This Model's ScaleDownDelaySeconds (2s)
+// h.RefreshInterval straight through. This Model's IdleTimeout (2s)
 // derives to a 500ms refresh (floor-clamped); h.RefreshInterval is set to a
 // much larger 5s ceiling that would let only the initial tick fire before the
 // hold's own deadline if the derivation were bypassed.
 func TestHandler_ServeHTTP_UsesPerModelRefreshInterval_NotTheCeiling(t *testing.T) {
 	c := NewCache()
 	c.Set("qwen", ModelSnapshot{
-		Phase:                 squallv1alpha1.ModelPhaseAsleep,
-		HoldTimeout:           900 * time.Millisecond,
-		ScaleDownDelaySeconds: 2,
-		Schedulable:           true,
+		Phase:       squallv1alpha1.ModelPhaseAsleep,
+		HoldTimeout: 900 * time.Millisecond,
+		IdleTimeout: 2 * time.Second,
+		Schedulable: true,
 	})
 	p := &fakePatcher{}
 	h := newHandler(t, c, nil)

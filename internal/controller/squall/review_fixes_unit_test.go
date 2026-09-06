@@ -231,7 +231,7 @@ func TestReconcile_SleepFlip_DoesNotNeedTheSecret(t *testing.T) {
 	}
 
 	// Clean, complete, aged idle evidence: one proxy replica, idle, last
-	// request an hour ago — far past the 300s scaleDownDelaySeconds.
+	// request an hour ago — far past the 5m idleTimeout.
 	idle := activityServer(t, squallv1alpha1.ActivityReport{
 		Models: map[string]squallv1alpha1.ModelActivity{
 			model.Name: {InFlight: 0, LastRequestAt: now.Add(-time.Hour)},

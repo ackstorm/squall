@@ -45,13 +45,13 @@ var Version = "dev"
 // defaultRefreshCeiling is LIVE-3's fix, corrected: the first attempt made
 // this a single flat interval for every Model, which is wrong by
 // construction — Handler.RefreshInterval is one proxy-wide value but the TTL
-// it must stay inside (spec.scaleDownDelaySeconds) is per-Model, and two
+// it must stay inside (spec.idleTimeout) is per-Model, and two
 // Models CAN and DID disagree about it in the same cluster (a 300s
 // production Model and a 2s e2e fixture). proxy.refreshIntervalFor now
 // derives the actual per-hold cadence from each Model's own TTL; this
 // constant is only the CEILING that derivation is clamped to, and what a
 // Model with no TTL configured falls back to entirely. 30s is 1/10 of
-// config/samples' representative 300s scaleDownDelaySeconds.
+// config/samples' representative 5m idleTimeout.
 const defaultRefreshCeiling = 30 * time.Second
 
 func main() {
@@ -100,10 +100,10 @@ func main() {
 	// arithmetic, not a reasoned fraction of anything — and then, briefly, a
 	// single flat interval applied to every Model. Both were wrong for the
 	// same reason: cooldown only rate-limits how often a PatchDemand call is
-	// allowed to land, and it has no relationship to scaleDownDelaySeconds,
+	// allowed to land, and it has no relationship to idleTimeout,
 	// the annotation's own expiry TTL, which is set PER MODEL, not once for
 	// the whole proxy. proxy.refreshIntervalFor now derives each hold's
-	// cadence from that Model's own scaleDownDelaySeconds; RefreshInterval
+	// cadence from that Model's own idleTimeout; RefreshInterval
 	// (below) only bounds that derivation from above. See
 	// defaultRefreshCeiling.
 

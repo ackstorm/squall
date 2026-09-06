@@ -37,12 +37,9 @@ func exampleModelSpec() squallv1alpha1.ModelSpec {
 			Backends: []string{"vastai"},
 			Regions:  []string{},
 		},
-		MinReplicas:           0,
-		HoldTimeout:           metav1.Duration{Duration: 20 * time.Minute},
-		ScaleDownDelaySeconds: 300,
-		Fleet: squallv1alpha1.ModelFleet{
-			IdleDuration: metav1.Duration{Duration: 10 * time.Minute},
-		},
+		MinReplicas:         0,
+		HoldTimeout:         metav1.Duration{Duration: 20 * time.Minute},
+		IdleTimeout:         metav1.Duration{Duration: 5 * time.Minute},
 		DrainTimeout:        metav1.Duration{Duration: 120 * time.Second},
 		ProvisioningTimeout: metav1.Duration{Duration: 45 * time.Minute},
 		MaxLifetime:         metav1.Duration{Duration: 168 * time.Hour},
@@ -119,30 +116,6 @@ func TestValidate_HoldTimeoutExceedsProvisioningTimeout(t *testing.T) {
 	}
 }
 
-// TestValidate_FleetIdleDurationRequired covers F21: dstack's own fleet
-// idle-release default is 3 days, so the CR MUST NOT be allowed to leave
-// fleet.idleDuration unset (the Go zero value) or explicitly zero — both
-// collapse to the same "no release window configured" state.
-func TestValidate_FleetIdleDurationRequired(t *testing.T) {
-	tests := []struct {
-		name     string
-		duration metav1.Duration
-	}{
-		{"absent (zero value)", metav1.Duration{}},
-		{"explicit zero", metav1.Duration{Duration: 0}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			spec := exampleModelSpec()
-			spec.Fleet.IdleDuration = tt.duration
-
-			if err := Validate(spec); err == nil {
-				t.Fatal("Validate() = nil, want an error: fleet.idleDuration must be > 0 (F21)")
-			}
-		})
-	}
-}
-
 // TestValidate_PlacementBackendsEmpty covers §12.3: placement.backends is
 // the enforcement point for the workload-eligibility table, not
 // documentation beside it. An empty list would let the controller pick any
@@ -153,27 +126,6 @@ func TestValidate_PlacementBackendsEmpty(t *testing.T) {
 
 	if err := Validate(spec); err == nil {
 		t.Fatal("Validate() = nil, want an error: placement.backends must not be empty (§12.3)")
-	}
-}
-
-// TestValidate_HoldTimeoutOutlastsWarmWindow_Warns covers §5.1's warm-window
-// rule: a holdTimeout that habitually waits out a full cold start (because
-// the warm window — scaleDownDelaySeconds + fleet.idleDuration — is short
-// relative to it) is "a misconfiguration in all but intent" and MUST be a
-// warning, never a rejection.
-func TestValidate_HoldTimeoutOutlastsWarmWindow_Warns(t *testing.T) {
-	spec := exampleModelSpec()
-	spec.ScaleDownDelaySeconds = 60                                      // 1m
-	spec.Fleet.IdleDuration = metav1.Duration{Duration: 2 * time.Minute} // warm window = 3m
-	spec.HoldTimeout = metav1.Duration{Duration: 20 * time.Minute}       // >> warm window
-	spec.ProvisioningTimeout = metav1.Duration{Duration: 45 * time.Minute}
-
-	warnings, err := ValidateWithWarnings(spec)
-	if err != nil {
-		t.Fatalf("ValidateWithWarnings() error = %v, want nil (this is a warning, not a rejection)", err)
-	}
-	if len(warnings) == 0 {
-		t.Fatal("ValidateWithWarnings() warnings = [], want a warning: holdTimeout (20m) far outlasts the warm window (3m)")
 	}
 }
 
@@ -188,38 +140,42 @@ func TestValidate_ExampleCR_ValidatesCleanly(t *testing.T) {
 	}
 }
 
-// TestValidate_WarmWindowIgnoresIdleDurationWhereItIsInert covers D158's
-// consequence for the §5.1 warm-window warning. fleet.idleDuration only
-// buys a warm instance on backends dstack marks dockerized; on Vast.ai,
-// Kubernetes and RunPod it forces the idle window to zero and never reads
-// the value, so counting it inflates the warm window on exactly the
-// backends where wakes are always cold.
-//
-// The case is chosen so the two answers DISAGREE: holdTimeout sits between
-// scaleDownDelaySeconds alone (5m) and scaleDownDelaySeconds +
-// fleet.idleDuration (15m). Measured live on 2026-09-04, this Model was
-// told it had a 15m warm window, and its demand anchor then expired 14
-// minutes before the GPU finished provisioning.
-func TestValidate_WarmWindowIgnoresIdleDurationWhereItIsInert(t *testing.T) {
+func TestValidate_RejectsNonPositiveIdleTimeout(t *testing.T) {
+	spec := exampleModelSpec()
+	spec.IdleTimeout = metav1.Duration{Duration: 0}
+	if _, err := ValidateWithWarnings(spec); err == nil {
+		t.Fatal("ValidateWithWarnings() = nil; a zero idleTimeout expires the demand " +
+			"annotation the instant it lands, making an on-demand Model permanently unwakeable")
+	}
+}
+
+func TestValidate_RejectsNonPositiveProvisioningTimeout(t *testing.T) {
+	spec := exampleModelSpec()
+	spec.ProvisioningTimeout = metav1.Duration{Duration: 0}
+	spec.HoldTimeout = metav1.Duration{Duration: 0}
+	if _, err := ValidateWithWarnings(spec); err == nil {
+		t.Fatal("ValidateWithWarnings() = nil; provisioningDue is a no-op for a " +
+			"non-positive timeout, and it is the primary bound on a run that never " +
+			"reaches Ready")
+	}
+}
+
+func TestValidate_WarnsWhenHoldCannotCoverAColdStart(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
-		backends    []string
+		hold        time.Duration
+		provisning  time.Duration
 		wantWarning bool
 	}{
-		{"vastai keeps no warm pool", []string{"vastai"}, true},
-		{"kubernetes keeps no warm pool", []string{"kubernetes"}, true},
-		{"runpod keeps no warm pool", []string{"runpod"}, true},
-		{"slurm keeps no warm pool", []string{"slurm"}, true},
-		{"aws is dockerized, idleDuration counts", []string{"aws"}, false},
-		{"one cold backend is enough to make the wake cold", []string{"aws", "vastai"}, true},
+		{"hold far below half the provisioning window", 5 * time.Minute, 30 * time.Minute, true},
+		{"hold at half exactly is not warned", 15 * time.Minute, 30 * time.Minute, false},
+		{"hold above half", 20 * time.Minute, 30 * time.Minute, false},
+		{"hold disabled is not this warning's business", 0, 30 * time.Minute, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spec := exampleModelSpec()
-			spec.Placement.Backends = tc.backends
-			spec.ScaleDownDelaySeconds = 300                                      // 5m
-			spec.Fleet.IdleDuration = metav1.Duration{Duration: 10 * time.Minute} // only counts when dockerized
-			spec.HoldTimeout = metav1.Duration{Duration: 12 * time.Minute}        // > 5m, < 15m
-			spec.ProvisioningTimeout = metav1.Duration{Duration: 45 * time.Minute}
+			spec.HoldTimeout = metav1.Duration{Duration: tc.hold}
+			spec.ProvisioningTimeout = metav1.Duration{Duration: tc.provisning}
 
 			warnings, err := ValidateWithWarnings(spec)
 			if err != nil {
@@ -227,13 +183,13 @@ func TestValidate_WarmWindowIgnoresIdleDurationWhereItIsInert(t *testing.T) {
 			}
 			var got bool
 			for _, w := range warnings {
-				if strings.Contains(w, "warm window") {
+				if strings.Contains(w, "cold start") {
 					got = true
 				}
 			}
 			if got != tc.wantWarning {
-				t.Errorf("warm-window warning = %v, want %v (backends %v, holdTimeout 12m, scaleDown 5m, idleDuration 10m); warnings = %v",
-					got, tc.wantWarning, tc.backends, warnings)
+				t.Errorf("cold-start warning = %v, want %v (hold %s, provisioning %s); warnings = %v",
+					got, tc.wantWarning, tc.hold, tc.provisning, warnings)
 			}
 		})
 	}

@@ -4,27 +4,25 @@ package squall
 
 import (
 	"fmt"
-	"strings"
-	"time"
 
 	squallv1alpha1 "github.com/ackstorm/squall/api/squall/v1alpha1"
 )
 
 // Validate enforces the Model cross-field rules spec §5.1 lists under
 // "Validation (webhook/CEL), enforced not documented" that OpenAPI schema
-// cannot express structurally — deadline ordering, the F21 fleet idle
-// trap, and the §12.3 backends allowlist. Structural rules (the engine/
-// minReplicas enums, placement.backends' MinItems=1, the image digest
-// pattern) are already enforced by the CRD schema generated from
-// api/squall/v1alpha1/model_types.go and are deliberately NOT duplicated
-// here.
+// cannot express structurally — deadline ordering, the idleTimeout/
+// provisioningTimeout floors, and the §12.3 backends allowlist. Structural
+// rules (the engine/minReplicas enums, placement.backends' MinItems=1, the
+// image digest pattern) are already enforced by the CRD schema generated
+// from api/squall/v1alpha1/model_types.go and are deliberately NOT
+// duplicated here.
 func Validate(spec squallv1alpha1.ModelSpec) error {
 	_, err := ValidateWithWarnings(spec)
 	return err
 }
 
 // ValidateWithWarnings runs the same rejection rules as Validate, plus the
-// §5.1 warm-window rule, which is advisory: a holdTimeout that habitually
+// §5.1 cold-start rule, which is advisory: a holdTimeout that habitually
 // waits out a full cold start is "a misconfiguration in all but intent" —
 // legal, but worth surfacing.
 func ValidateWithWarnings(spec squallv1alpha1.ModelSpec) ([]string, error) {
@@ -32,9 +30,6 @@ func ValidateWithWarnings(spec squallv1alpha1.ModelSpec) ([]string, error) {
 		return nil, fmt.Errorf("placement.backends must not be empty: it enforces the §12.3 workload-eligibility allowlist, not merely documents it")
 	}
 
-	if spec.Fleet.IdleDuration.Duration <= 0 {
-		return nil, fmt.Errorf("fleet.idleDuration is required and must be > 0: dstack's own default is 3 days (F21), so leaving it unset is not a safe fallback")
-	}
 	if u := spec.UncontrolledTimeout; u != nil {
 		if u.Duration <= 0 {
 			return nil, fmt.Errorf("uncontrolledTimeout must be > 0 (omit it for the default)")
@@ -57,66 +52,31 @@ func ValidateWithWarnings(spec squallv1alpha1.ModelSpec) ([]string, error) {
 			spec.HoldTimeout.Duration, spec.ProvisioningTimeout.Duration)
 	}
 
-	var warnings []string
-	scaleDown := time.Duration(spec.ScaleDownDelaySeconds) * time.Second
-	warmWindow, formula := scaleDown, "scaleDownDelaySeconds"
-	if backendsHoldAWarmPool(spec.Placement.Backends) {
-		warmWindow += spec.Fleet.IdleDuration.Duration
-		formula = "scaleDownDelaySeconds + fleet.idleDuration"
+	if spec.IdleTimeout.Duration <= 0 {
+		return nil, fmt.Errorf("idleTimeout must be > 0: it is also the demand annotation's TTL, so a zero expires demand the instant the proxy writes it and the Model can never wake")
 	}
-	if spec.HoldTimeout.Duration > 0 && spec.HoldTimeout.Duration > warmWindow {
+	if spec.ProvisioningTimeout.Duration <= 0 {
+		return nil, fmt.Errorf("provisioningTimeout must be > 0: it is the only bound on a run that never reaches Ready, and provisioningDue does nothing for a non-positive value")
+	}
+
+	var warnings []string
+	// Replaces the per-backend warm-window arithmetic (D158, D164), which
+	// measured a window that no longer exists. This warns in the direction
+	// of the mistake actually made in production: a hold too short to
+	// outlast a cold start answers 503 to EVERY cold request. The
+	// comparison is against provisioningTimeout — the operator's own
+	// statement of how long a wake may take — so it needs no knowledge of
+	// backends. Half is a heuristic and the text says so: a measured 9m53s
+	// cold start against a 30m provisioningTimeout sits just above the
+	// line, and the 5m hold that would 503 everything sits well below it.
+	if spec.HoldTimeout.Duration > 0 && spec.HoldTimeout.Duration*2 < spec.ProvisioningTimeout.Duration {
 		warnings = append(warnings, fmt.Sprintf(
-			"holdTimeout (%s) exceeds the warm window (%s = %s): most wakes will pay a full cold start, which is a misconfiguration in all but intent",
-			spec.HoldTimeout.Duration, warmWindow, formula))
+			"holdTimeout (%s) is less than half of provisioningTimeout (%s): there is no warm pool on any backend, so every wake is a full cold start and a hold this short will answer 503 to cold requests rather than serve them. This is a heuristic, not a rule — raise holdTimeout, or lower provisioningTimeout if your wakes really are that fast",
+			spec.HoldTimeout.Duration, spec.ProvisioningTimeout.Duration))
 	}
 	if spec.HardStop.Duration == 0 && spec.MinReplicas == 0 {
 		warnings = append(warnings, "hardStop is disabled: nothing would stop this Model's capacity if the controller died — and note hardStop does not currently fire on the Kubernetes backend either (D161), so enabling it is not by itself a dead-man's switch")
 	}
 
 	return warnings, nil
-}
-
-// nonDockerizedBackends are the dstack backends whose provisioning data
-// carries dockerized: false. That flag is not a detail: dstack forces
-// termination_idle_time to 0 and never reads the profile's idle_duration
-// unless it is true (D158, and docs/references/dstack-real-api.md §9.9),
-// so on these backends a fleet keeps no warm instance and every wake is a
-// full cold provision. Source-verified against dstack a70d98b, then
-// measured on both Vast.ai and Kubernetes.
-//
-// This is the COMPLETE set as of dstack 0.21.3: every other backend that
-// ships a compute module constructs its JobProvisioningData with
-// dockerized=True. Re-derive it on a dstack bump with
-//
-//	grep -ro 'dockerized=[A-Za-z]*' src/dstack/_internal/core/backends
-//
-// rather than guessing — a backend missing from this map is told its warm
-// window includes an idleDuration that dstack will never read.
-var nonDockerizedBackends = map[string]struct{}{
-	"vastai":     {},
-	"kubernetes": {},
-	"runpod":     {},
-	"slurm":      {},
-}
-
-// backendsHoldAWarmPool reports whether fleet.idleDuration can contribute
-// anything to the warm window for this placement.
-//
-// Deliberately pessimistic: ONE non-dockerized backend in the allowlist is
-// enough to answer false, because dstack is free to place the wake there
-// and that wake would be cold. Counting idleDuration anyway is how the
-// warning came to under-report the exact case it exists for — a live
-// Vast.ai Model was told its warm window was 15m when it was 5m, and its
-// demand anchor then expired 14 minutes before the GPU it was holding
-// open finished provisioning.
-func backendsHoldAWarmPool(backends []string) bool {
-	if len(backends) == 0 {
-		return false
-	}
-	for _, b := range backends {
-		if _, cold := nonDockerizedBackends[strings.ToLower(strings.TrimSpace(b))]; cold {
-			return false
-		}
-	}
-	return true
 }

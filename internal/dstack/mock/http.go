@@ -26,6 +26,10 @@ type runSpecInWire struct {
 	RunName       string `json:"run_name"`
 	Configuration struct {
 		Replicas int `json:"replicas"`
+		// IdleDuration is decoded as a POINTER so an absent key stays
+		// distinguishable from an explicit 0 — the difference dstack itself
+		// treats as two different specs, and the whole subject of D156.
+		IdleDuration *int `json:"idle_duration"`
 	} `json:"configuration"`
 }
 
@@ -39,6 +43,10 @@ type normalizedRunSpecWire struct {
 	RunName       string `json:"run_name"`
 	Configuration struct {
 		Replicas replicasWire `json:"replicas"`
+		// omitempty is load-bearing: get_plan echoes this struct back and
+		// apply decodes the echo, so an absent idle_duration has to survive
+		// the round trip as absent rather than as 0.
+		IdleDuration *int `json:"idle_duration,omitempty"`
 	} `json:"configuration"`
 }
 
@@ -112,7 +120,8 @@ type runOutWire struct {
 	RunSpec       struct {
 		RunName       string `json:"run_name"`
 		Configuration struct {
-			Replicas replicasWire `json:"replicas"`
+			Replicas     replicasWire `json:"replicas"`
+			IdleDuration *int         `json:"idle_duration,omitempty"`
 		} `json:"configuration"`
 	} `json:"run_spec"`
 }
@@ -125,6 +134,7 @@ func runToWire(run *Run) runOutWire {
 	out.DeploymentNum = run.DeploymentNum
 	out.RunSpec.RunName = run.Name
 	out.RunSpec.Configuration.Replicas = replicasWire{Min: run.Replicas, Max: run.Replicas}
+	out.RunSpec.Configuration.IdleDuration = run.IdleDuration
 	if run.ServiceURL != "" {
 		out.Service = &serviceWire{URL: run.ServiceURL}
 	}
@@ -231,6 +241,7 @@ func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 	var normalized normalizedRunSpecWire
 	normalized.RunName = in.RunSpec.RunName
 	normalized.Configuration.Replicas = replicasWire{Min: in.RunSpec.Configuration.Replicas, Max: in.RunSpec.Configuration.Replicas}
+	normalized.Configuration.IdleDuration = in.RunSpec.Configuration.IdleDuration
 	specBody, err := json.Marshal(normalized)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error(), "error")
@@ -264,12 +275,18 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	run, err := s.Apply(ApplyRequest{
-		Name:     spec.RunName,
-		Replicas: spec.Configuration.Replicas.Min,
-		Current:  current,
-		Force:    in.Force,
+		Name:         spec.RunName,
+		Replicas:     spec.Configuration.Replicas.Min,
+		Current:      current,
+		Force:        in.Force,
+		IdleDuration: spec.Configuration.IdleDuration,
 	})
 	switch {
+	case errors.Is(err, ErrCannotOverride):
+		// MEASURED (D156 leg C): HTTP 400, generic "error" code, and the
+		// message is the only discriminator — exactly like the CAS conflict.
+		writeError(w, http.StatusBadRequest, "Cannot override active run. Stop the run first.", "error")
+		return
 	case errors.Is(err, ErrForceForbidden):
 		writeError(w, http.StatusBadRequest, err.Error(), "error")
 		return

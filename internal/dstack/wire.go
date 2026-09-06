@@ -95,7 +95,7 @@ type configurationWire struct {
 	Backends     []string          `json:"backends,omitempty"`
 	Regions      []string          `json:"regions,omitempty"`
 	MaxPrice     string            `json:"max_price,omitempty"`
-	IdleDuration string            `json:"idle_duration,omitempty"`
+	IdleDuration *int              `json:"idle_duration,omitempty"`
 	MaxDuration  string            `json:"max_duration,omitempty"`
 }
 
@@ -105,6 +105,45 @@ func dstackDuration(d time.Duration) string {
 		return ""
 	}
 	return fmt.Sprintf("%ds", int64(d/time.Second))
+}
+
+// dstackSeconds renders a duration as dstack's whole-second integer form.
+//
+// It returns a NON-NIL pointer for a zero duration on purpose. Zero is a
+// meaningful value — "release on the first idle pass" — and it has to reach
+// the wire, while a nil pointer means "unset" and lets dstack apply its own
+// defaults: DEFAULT_RUN_TERMINATION_IDLE_TIME = 5m and
+// DEFAULT_FLEET_TERMINATION_IDLE_TIME = 3d (core/models/profiles.py). The
+// string form with `omitempty` could not express that difference, which is
+// how a Go zero came to mean "three days of paid idle instance" (D166).
+func dstackSeconds(d time.Duration) *int {
+	if d < 0 {
+		d = 0
+	}
+	s := int(d / time.Second)
+	return &s
+}
+
+// dstackSecondsPtr renders an OPTIONAL duration: nil in, nil out — the key
+// is omitted entirely — and any non-nil value goes out explicitly, zero
+// included. Absence and an explicit 0 are DIFFERENT specs to dstack, and
+// only the caller knows which one this run needs (D156).
+func dstackSecondsPtr(d *time.Duration) *int {
+	if d == nil {
+		return nil
+	}
+	return dstackSeconds(*d)
+}
+
+// wireSecondsPtr is dstackSecondsPtr's inverse: an absent key decodes to
+// nil, not to zero, so a run that stored no idle_duration is never
+// mistaken for one that stored 0.
+func wireSecondsPtr(v *int) *time.Duration {
+	if v == nil {
+		return nil
+	}
+	d := time.Duration(*v) * time.Second
+	return &d
 }
 
 func wireSeconds(v *int) time.Duration {
@@ -195,7 +234,7 @@ type fleetConfigurationWire struct {
 	Nodes        string        `json:"nodes"`
 	Resources    resourcesWire `json:"resources"`
 	Backends     []string      `json:"backends,omitempty"`
-	IdleDuration string        `json:"idle_duration,omitempty"`
+	IdleDuration *int          `json:"idle_duration,omitempty"`
 }
 
 // fleetSpecWire mirrors dstack's FleetSpec. Profile is a required field on
