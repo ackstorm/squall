@@ -52,8 +52,12 @@ func ValidateWithWarnings(spec squallv1alpha1.ModelSpec) ([]string, error) {
 			spec.HoldTimeout.Duration, spec.ProvisioningTimeout.Duration)
 	}
 
-	if spec.IdleTimeout.Duration <= 0 {
-		return nil, fmt.Errorf("idleTimeout must be > 0: it is also the demand annotation's TTL, so a zero expires demand the instant the proxy writes it and the Model can never wake")
+	if spec.IdleTimeout.Duration < MinIdleTimeout {
+		return nil, fmt.Errorf("idleTimeout (%s) must be at least %s: it is also the "+
+			"demand annotation's TTL, stamped at RFC3339 second granularity, so a shorter "+
+			"window can expire before the controller next evaluates it and the Model then "+
+			"never wakes, with no error and no event",
+			spec.IdleTimeout.Duration, MinIdleTimeout)
 	}
 	if spec.ProvisioningTimeout.Duration <= 0 {
 		return nil, fmt.Errorf("provisioningTimeout must be > 0: it is the only bound on a run that never reaches Ready, and provisioningDue does nothing for a non-positive value")

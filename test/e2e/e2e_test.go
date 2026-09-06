@@ -72,18 +72,16 @@ spec:
     maxPricePerHour: "0.80"
   minReplicas: 0
   holdTimeout: 5s
-  # 8s, not the 2s this had: idleTimeout is ALSO the demand annotation's
-  # TTL (hasDemand, model_controller.go). The proxy stamps demand-since at
-  # RFC3339 SECOND granularity and stops refreshing the moment the request
-  # commits — and against model-mock a request commits in ~20ms, so exactly
-  # one un-refreshed stamp has to survive until the controller next
-  # reconciles. With SQUALL_IDLE_REQUEUE_INTERVAL at 2s plus up to 1s lost
-  # to second-truncation, a 2s TTL expired first and the Model never woke
-  # at all. Not a regression: the pre-rename fixture had
-  # scaleDownDelaySeconds: 2, the identical 2s. It had simply never run —
-  # cluster-up itself was broken (see 00-namespaces/namespace.yaml), so CI
-  # never reached this spec.
-  idleTimeout: 8s
+  # 1m, the MinIdleTimeout floor (internal/controller/squall/phase.go).
+  # idleTimeout is ALSO the demand annotation's TTL (hasDemand,
+  # model_controller.go). The proxy stamps demand-since at RFC3339 SECOND
+  # granularity and stops refreshing the moment the request commits — against
+  # model-mock a request commits in ~20ms, so exactly one un-refreshed stamp
+  # has to survive until the controller next reconciles. This fixture used to
+  # carry 2s, which expired first and left the Model permanently Asleep
+  # (D171); 8s fixed that empirically, and validation now enforces a floor
+  # rather than relying on a fixture getting it right.
+  idleTimeout: 1m
   drainTimeout: 10s
   provisioningTimeout: 5m
   maxLifetime: 168h
@@ -277,13 +275,12 @@ var _ = Describe("Model lifecycle (Task 11.3)", Ordered, func() {
 		By("driving one more request through so the activity tracker records this Model idle")
 		sendChatRequests(proxyAddr, loopModelName, 1)
 
-		// idleTimeout: 8s in loopModelYAML — give the
-		// reconciler (SQUALL_IDLE_REQUEUE_INTERVAL, see
-		// 02-operator/controller-patch.yaml) comfortably longer than
-		// that to notice.
+		// idleTimeout: 1m in loopModelYAML — give the reconciler
+		// (SQUALL_IDLE_REQUEUE_INTERVAL, see 02-operator/controller-patch.yaml)
+		// comfortably longer than that to notice.
 		Eventually(func(g Gomega) string {
 			return getModelStatus(g, loopModelName).Phase
-		}, 30*time.Second, time.Second).Should(Equal("Asleep"))
+		}, 2*time.Minute, time.Second).Should(Equal("Asleep"))
 	})
 
 	It("keeps the same run across the sleep flip (F20: flip is not recreate)", func() {

@@ -194,3 +194,45 @@ func TestValidate_WarnsWhenHoldCannotCoverAColdStart(t *testing.T) {
 		})
 	}
 }
+
+func TestValidate_RejectsIdleTimeoutBelowFloor(t *testing.T) {
+	spec := exampleModelSpec()
+	spec.IdleTimeout = metav1.Duration{Duration: 30 * time.Second}
+	_, err := ValidateWithWarnings(spec)
+	if err == nil {
+		t.Fatal("ValidateWithWarnings() = nil for idleTimeout 30s; a value below " +
+			"MinIdleTimeout can expire before the controller next evaluates the demand " +
+			"annotation, leaving the Model permanently unwakeable with no error and no event")
+	}
+	if !strings.Contains(err.Error(), "idleTimeout") || !strings.Contains(err.Error(), MinIdleTimeout.String()) {
+		t.Fatalf("error %q must name both the field and the floor, or an operator "+
+			"cannot act on it", err)
+	}
+}
+
+// TestValidate_AcceptsIdleTimeoutExactlyAtFloor is the non-vacuity anchor for
+// the whole rule: it is the case that must turn red when MinIdleTimeout is
+// mutated upward. A rule tested only from below passes for a floor of any size.
+//
+// The literal one minute is deliberate and must NOT be replaced with
+// MinIdleTimeout. Written as `Duration: MinIdleTimeout` this test moves its
+// own input with the constant and can never fail — it was written that way
+// first, and the mutation sweep caught it passing against a 2m floor. Pinning
+// the number here is what makes a change to the constant a deliberate act:
+// raise the floor and this test fails until someone decides it should.
+func TestValidate_AcceptsIdleTimeoutExactlyAtFloor(t *testing.T) {
+	spec := exampleModelSpec()
+	spec.IdleTimeout = metav1.Duration{Duration: time.Minute}
+	if _, err := ValidateWithWarnings(spec); err != nil {
+		t.Fatalf("ValidateWithWarnings() = %v; exactly one minute must be accepted — "+
+			"the floor is inclusive and its value is one minute", err)
+	}
+}
+
+func TestValidate_AcceptsIdleTimeoutAboveFloor(t *testing.T) {
+	spec := exampleModelSpec()
+	spec.IdleTimeout = metav1.Duration{Duration: 5 * time.Minute}
+	if _, err := ValidateWithWarnings(spec); err != nil {
+		t.Fatalf("ValidateWithWarnings() = %v; the CRD default of 5m must validate", err)
+	}
+}
