@@ -39,7 +39,6 @@ func TestReconcile_EndpointSliceChurn_NoPrematureSleep(t *testing.T) {
 
 	const name = "qwen-7-2"
 	spec := exampleModelSpec()
-	spec.IdleTimeout = metav1.Duration{Duration: time.Second} // small, so "aged past" needs no FakeClock/real sleep >1s
 	model := &squallv1alpha1.Model{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       name,
@@ -160,7 +159,6 @@ func TestReconcile_SleepFlip_RunPredatesIdleDuration(t *testing.T) {
 	defer cancel()
 	const name = "qwen-predates-idle"
 	spec := exampleModelSpec()
-	spec.IdleTimeout = metav1.Duration{Duration: time.Second}
 	model := &squallv1alpha1.Model{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: manualNamespace, Finalizers: []string{ModelFinalizer}}, Spec: spec}
 	if err := k8sClient.Create(ctx, model); err != nil {
 		t.Fatal(err)

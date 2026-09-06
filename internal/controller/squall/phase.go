@@ -309,6 +309,20 @@ const MaxExplicitUncontrolledTimeout = 24 * time.Hour
 
 const MinHardStop = time.Hour
 
+// MinIdleTimeout is the floor under spec.idleTimeout. It is not a tuning
+// preference. idleTimeout is ALSO the demand annotation's TTL (hasDemand,
+// model_controller.go), and the proxy stamps that annotation at RFC3339
+// SECOND granularity, so a shorter window can expire before the controller
+// next evaluates it — the Model then never wakes, with no error, no event
+// and no condition (ledger D171; measured: idleTimeout 2s stayed Asleep
+// indefinitely, 8s and 30s reached Ready in about two seconds).
+//
+// One minute clears all three known contributors at once: up to 1s lost to
+// second-truncation, the 15s default SQUALL_IDLE_REQUEUE_INTERVAL, and cold
+// starts measured in minutes on every real backend. It is a floor under a
+// cliff, not a recommendation — the CRD default is 5m.
+const MinIdleTimeout = time.Minute
+
 // ProvisioningRetryBackoff paces recreate attempts after dstack has told us
 // the backend could not satisfy the run (D163).
 //
