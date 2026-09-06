@@ -228,8 +228,10 @@ spec:
                   the instant it lands. Unlike the int32 it replaces, a written `0s`
                   survives serialization, so validation rejects it explicitly.
 
-                  The floor is NOT zero, though zero is all validation can safely
-                  reject. An IdleTimeout shorter than the controller's own idle
+                  The floor is one minute and validation enforces it
+                  (MinIdleTimeout, internal/controller/squall/phase.go): anything
+                  shorter is refused with Schedulable=False rather than admitted and
+                  left silently unwakeable. An IdleTimeout shorter than the controller's own idle
                   requeue interval (SQUALL_IDLE_REQUEUE_INTERVAL, 15s by default) is
                   unwakeable for the same reason: the proxy stamps demand, the stamp
                   expires before Reconcile next evaluates the Model, and the wake

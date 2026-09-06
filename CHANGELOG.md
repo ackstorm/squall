@@ -9,6 +9,18 @@ versions, and a change that would be breaking after 1.0 is only a minor bump
 here. Anything that can cost money or terminate a running generation is called
 out explicitly, because that is the class of change worth reading twice.
 
+## [Unreleased]
+
+### Changed
+
+- **`spec.idleTimeout` now has an enforced floor of one minute.** It is also the demand
+  annotation's TTL, so a shorter value could leave an on-demand Model permanently
+  unwakeable with no error, no event and no condition. A Model below the floor now
+  reports `Schedulable=False` with the reason in `status.conditions` and is not
+  provisioned. There is no admission webhook, so this cannot refuse a `kubectl apply` or
+  fail a GitOps sync — but a Model running today with, say, `idleTimeout: 10s` will stop
+  waking after this upgrade. Raise it to at least `1m`.
+
 ## [0.1.7] — 2026-09-05
 
 ### BREAKING

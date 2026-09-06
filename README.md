@@ -316,23 +316,25 @@ Rules of thumb:
 | Steady all day | `minReplicas: 1` — you are paying anyway; stop re-provisioning |
 | Rare and latency-tolerant | `1m`–`5m`, and raise `holdTimeout` so callers wait rather than get a 503 |
 
-#### There is a floor, and it is not zero
+#### There is a floor, and it is one minute
 
-Because of job 3, an `idleTimeout` shorter than the controller's own reconcile cadence makes
-a Model **permanently unwakeable**: the proxy stamps demand, the annotation expires before
-the controller next evaluates the `Model`, and the wake it was supposed to trigger never
-happens. The request 503s, and every retry does the same.
+Because of job 3, an `idleTimeout` too short to survive until the controller next evaluates
+the `Model` makes it **permanently unwakeable**: the proxy stamps demand, the annotation
+expires before anyone reads it, and the wake never happens. The request 503s, and every
+retry does the same — with no error, no event and no condition to explain it.
 
-Two details set the floor:
+Squall refuses anything below **one minute**. A `Model` under the floor reports
+`Schedulable=False` with the reason in `status.conditions` and is not provisioned, so the
+failure is visible to `kubectl describe model` instead of silent.
 
-- The controller re-evaluates an idle `Model` on its **idle requeue interval — 15s by
-  default** (`SQUALL_IDLE_REQUEUE_INTERVAL`).
-- The demand annotation is stamped at RFC3339 **second** granularity, so up to another
-  second is lost to truncation.
+One minute is a floor under a cliff, not a recommendation. It clears three separate
+contributors at once:
 
-Validation rejects only a literal `0s`, which is the unambiguous case. **Keep `idleTimeout`
-comfortably above your requeue interval** — the `5m` default is 20× it, and anything at or
-below about `30s` deserves a second look and a matching `SQUALL_IDLE_REQUEUE_INTERVAL`.
+- up to a second lost to the demand annotation's RFC3339 **second** granularity;
+- the controller's **idle requeue interval — 15s by default** (`SQUALL_IDLE_REQUEUE_INTERVAL`);
+- cold starts, which are measured in minutes on every backend squall supports.
+
+Pick a real value from the table above rather than the floor; the default is `5m`.
 Measured directly (ledger D171): with a 2s requeue, `idleTimeout: 2s` never woke at all,
 while `8s` and `30s` reached `Ready` about two seconds after the request.
 
