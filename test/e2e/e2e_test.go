@@ -63,9 +63,19 @@ spec:
   args: []
   env: {}
   resources:
+    cpu:
+      count: "1.."
+    memory: 512MB..
+    disk: 10GB..
     gpu:
-      name: [A10G]
-      memory: 24GB..32GB
+      # Explicitly none, matching 03-fixtures/model.yaml. kind has no GPU,
+      # so an A10G request — which this carried until 2026-09-06 — can never
+      # be satisfied by kind-fleet: dstack fails every run with
+      # failed_to_start_due_to_no_capacity, F20 reads the terminal run as an
+      # uncommanded death and recreates, and the loop repeats every ~15-18s.
+      # The old idleTimeout: 8s slept the Model before the first failure
+      # landed, so the suite passed for the wrong reason (D172).
+      count: "0"
   placement:
     backends: [kubernetes]
     regions: []
