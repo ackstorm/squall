@@ -285,7 +285,7 @@ dstack:
     # PINNED. Every measured fact this chart's dstack wiring relies on (the
     # required fleet, the proxy_jump requirement, the RBAC verb set) was
     # measured against exactly this version. Re-measure before bumping.
-    tag: "0.21.3"
+    tag: "0.21.5"
     pullPolicy: IfNotPresent
   # Required. Becomes the dstack "admin" user's token on first boot only
   # (DSTACK_SERVER_ADMIN_TOKEN — server/services/users.py); a later change has
