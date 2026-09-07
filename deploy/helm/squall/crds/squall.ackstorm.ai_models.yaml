@@ -142,6 +142,12 @@ spec:
                   HardStop is an on-demand-only dead-man's switch sent as dstack
                   max_duration and enforced by the runner. Zero disables it with warning.
 
+                  On-demand-only is literal: under MinReplicas: 1 the submission carries
+                  NO max_duration at all (model_controller.go gates the assignment on
+                  MinReplicas == 0), so this field is ignored for a pinned Model however
+                  it is set. Contrast MaxLifetime above, which stays meaningful in both
+                  modes precisely because it never actuates.
+
                   DOES NOT FIRE ON THE KUBERNETES BACKEND (D161). It is wired
                   correctly — the value reaches job_spec.max_duration and the runner's
                   submit body — but it is not enforced. A live Model ran 104 minutes
@@ -213,7 +219,7 @@ spec:
                   answer immediately without holding.
                 type: string
               idleTimeout:
-                default: 5m
+                default: 15m
                 description: |-
                   IdleTimeout is how long squall keeps paying after the last request,
                   with the model loaded and answering instantly. Once in-flight
@@ -222,6 +228,15 @@ spec:
                   There is no warm pool on any backend, by design, so the next wake
                   after this window is a full cold start and holdTimeout has to cover
                   one.
+
+                  Which mode it applies to, precisely: only the SLEEP flip is
+                  on-demand-only — it is gated on MinReplicas == 0 (sleepDue, phase.go)
+                  and does nothing to a pinned Model. The field is still read in BOTH
+                  modes, ungated, as the staleness bound on readiness evidence (b)
+                  (freshSuccess, model_controller.go) and as squall-proxy's
+                  demand-refresh cadence. So it is NOT a no-op under MinReplicas: 1,
+                  and it is deliberately not nested under an on-demand-only block that
+                  would claim otherwise (ledger D167(b)).
 
                   It is ALSO hasDemand's TTL, so a zero makes an on-demand Model
                   permanently unwakeable — the annotation the proxy writes would expire
@@ -237,8 +252,8 @@ spec:
                   expires before Reconcile next evaluates the Model, and the wake
                   never happens — the request 503s and so does every retry. The stamp
                   is RFC3339 at SECOND granularity, so up to another second is lost to
-                  truncation. Keep this comfortably above the requeue interval; the 5m
-                  default is 20x it. Measured, ledger D171: against a 2s requeue,
+                  truncation. Keep this comfortably above the requeue interval; the 15m
+                  default is 60x it. Measured, ledger D171: against a 2s requeue,
                   idleTimeout 2s never woke at all while 8s and 30s reached Ready in
                   about two seconds.
 
@@ -528,6 +543,13 @@ spec:
                   evidence is unavailable. Nil defaults to min(4x the idle window + 15m,
                   2h); an explicit value must be in (0, 24h], and zero is rejected: there
                   is no opt-out from a bound on a GPU squall cannot see (D154).
+
+                  IGNORED when MinReplicas: 1. The trigger is gated on MinReplicas == 0
+                  (uncontrolledDue, phase.go): a pinned Model is meant to stay up
+                  whether or not squall can currently see idle evidence, so there is
+                  nothing here for this bound to protect against. Validation still
+                  checks the value's range in both modes, so a pinned Model with a
+                  nonsensical one is refused rather than silently accepted.
                 type: string
             required:
             - engine

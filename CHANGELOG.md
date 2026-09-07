@@ -11,7 +11,38 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+## [0.1.8] — 2026-09-07
+
 ### Changed
+
+- **`spec.idleTimeout`'s default moves from `5m` to `15m`.** Only Models that omit the
+  field are affected; an explicit value is untouched. A five-minute budget spends most of
+  every wake re-provisioning — cold starts on real backends are measured in minutes
+  (~2m12s on Vast.ai, ~10m once weights load), so the old default paid for a machine that
+  spent much of its life coming up.
+
+  **The second-order effect is the one to check.** `spec.uncontrolledTimeout` — the bound
+  on how long capacity may stay up while squall cannot see idle evidence — defaults to
+  `min(4 × idleTimeout + 15m, 2h)`. A Model that sets *neither* field therefore moves from
+  a 35-minute uncontrolled deadline to a 75-minute one. Still bounded and still under the
+  two-hour cap, but it is a real loosening of a money bound, and it happens to manifests
+  nobody edited. Set `uncontrolledTimeout` explicitly if you were relying on the old
+  derived value.
+
+- **The CRD now says which fields apply in which mode.** `spec.idleTimeout`,
+  `spec.uncontrolledTimeout` and `spec.hardStop` behave differently under `minReplicas: 1`,
+  and until now nothing said so where an operator would look. Read them with
+  `kubectl explain model.spec.idleTimeout` and friends.
+
+  The scoping is narrower than it sounds, and the docs say so rather than rounding it off:
+  `uncontrolledTimeout` and `hardStop` are genuinely ignored when `minReplicas: 1`, but
+  `idleTimeout` is not — only its *sleep* behaviour is on-demand-only. It is still read in
+  both modes as the staleness bound on readiness evidence and as `squall-proxy`'s
+  demand-refresh cadence.
+
+  No schema change, no field moved or renamed. A `spec.mode` + `spec.onDemand` block was
+  designed and rejected: it would have asserted that `idleTimeout` is on-demand-only, which
+  the code does not do.
 
 - **`spec.idleTimeout` now has an enforced floor of one minute.** It is also the demand
   annotation's TTL, so a shorter value could leave an on-demand Model permanently
@@ -334,7 +365,9 @@ order to run this safely are listed.
   so a Model verified before upgrading keeps it empty until its run generation
   is replaced. Empty means "do not rewrite", which is the safe direction.
 
-[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/ackstorm/squall/compare/v0.1.7...v0.1.8
+[0.1.7]: https://github.com/ackstorm/squall/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/ackstorm/squall/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/ackstorm/squall/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/ackstorm/squall/compare/v0.1.3...v0.1.4
