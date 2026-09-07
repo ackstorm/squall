@@ -107,10 +107,18 @@ func TestSampleModel_AppliesAndDefaultsMaterialise(t *testing.T) {
 // (the field is hasDemand's TTL, so zero made the demand annotation expire
 // the instant it landed — silently, with no event or condition), and one
 // that omits drainTimeout got ZERO drain on delete (pastDeadline true on
-// the finalizer's first pass). Both now default at admission to the
-// spec's own §5.1 example values; a real API server is the only place
-// structural-schema defaulting actually runs, which is why this is
-// envtest.
+// the finalizer's first pass). Both now default at admission; a real API
+// server is the only place structural-schema defaulting actually runs,
+// which is why this is envtest.
+//
+// drainTimeout's default is the spec's own §5.1 example value.
+// idleTimeout's is NOT: the spec states no default for it (§5.1 line 240
+// is an example CR, not a default), and 15m was chosen by the owner on
+// 2026-09-07 over the 5m this once carried, because a 5m budget spends
+// most of every wake re-provisioning a GPU whose cold start is minutes
+// (D174). Changing this literal also moves the DEFAULT uncontrolled
+// deadline, which is derived as min(4x idleTimeout + 15m, 2h) — read
+// D174 before touching it.
 func TestMinimalModel_DefaultsIdleTimeoutAndDrainTimeout(t *testing.T) {
 	if testing.Short() {
 		t.Skip("envtest test: run via make test-envtest")
@@ -154,8 +162,8 @@ spec:
 	if err := k8sClient.Get(ctx, types.NamespacedName{Name: "minimal-defaults", Namespace: "default"}, got); err != nil {
 		t.Fatalf("get minimal Model: %v", err)
 	}
-	if got.Spec.IdleTimeout.Duration != 5*time.Minute {
-		t.Errorf("spec.idleTimeout = %s, want the §5.1 default 5m — zero means this Model can never wake (D105)",
+	if got.Spec.IdleTimeout.Duration != 15*time.Minute {
+		t.Errorf("spec.idleTimeout = %s, want the 15m default (D174) — zero means this Model can never wake (D105)",
 			got.Spec.IdleTimeout.Duration)
 	}
 	if got.Spec.DrainTimeout.Duration != 120*time.Second {

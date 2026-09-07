@@ -1,9 +1,70 @@
 # Design — `spec.mode` and the `spec.onDemand` block
 
-**Status:** proposed, awaiting owner review
+**Status:** **SUPERSEDED — not implemented, do not implement.** Rejected by the owner on
+2026-09-07 as over-engineering. Kept for the two measurements in it, which are load-bearing
+and were expensive to obtain — see "What survives" below.
 **Date:** 2026-09-06
-**Breaking:** yes — `spec.minReplicas` is removed and four fields move.
+**Superseded by:** the flat `minReplicas` shape that already exists, plus mode-scoping
+sentences in the `idleTimeout` / `uncontrolledTimeout` / `hardStop` doc comments
+(`api/squall/v1alpha1/model_types.go`), which reach an operator through
+`kubectl explain model.spec.<field>`.
+**Breaking:** yes — that was the point, and the reason it was dropped.
 **Depends on:** the `freshSuccess` fallback, which lands first and separately (see "Prerequisite").
+
+## Why this was rejected
+
+Three reasons, in descending weight.
+
+**1. The proposed block would have been a false statement about the code.**
+`spec.onDemand.idleTimeout` asserts the field applies only on demand. It does not:
+`freshSuccess` (`model_controller.go`) reads `spec.IdleTimeout` **ungated** by
+`minReplicas` as the staleness bound on readiness evidence (b), and `squall-proxy` uses it
+as the demand-refresh cadence in both modes. Only the *sleep flip* is on-demand-only. This
+design already conceded the point by requiring a `freshSuccess` fallback as a prerequisite
+— that is, extra work whose sole purpose is to make the new shape honest. The flat field is
+honest today.
+
+**2. The thing being made structural is five lines.** Every `minReplicas` gate in the
+non-test tree: `wantAwake` (`phase.go`), `sleepDue`, `unhealthyDue`, `uncontrolledDue`
+(same file, adjacent), and the `hardStop` assignment in `model_controller.go`. One
+subsystem, effectively one screen. Not a concept that needs a schema to express.
+
+**3. KubeAI — the closest comparable project, with the same 0-replica problem — kept a
+flat `minReplicas: 0`** and introduced no such block. The `2026-09-06-idle-timeout-floor`
+design had already recorded this under "Explicitly not doing"; this design then did it
+anyway without new evidence. That is the actual process error, and it is the reason this
+banner exists rather than a quiet delete.
+
+Against those: a breaking API change across two binaries, eight in-tree `Model` manifests,
+a CEL tombstone, a two-half migration guard, and the `internal/proxy/cache.go` unstructured
+read of `spec.idleTimeout` whose absence resolves to `0` **silently** — no compiler, no
+failing test. The highest-risk edit in the whole change would have bought zero behaviour.
+
+The narrow real complaint — that `minReplicas: 1` plus an explicit `idleTimeout: 10m`
+tells the operator nothing — is answered where operators look, in the field docs and
+therefore in `kubectl explain`. Note that `ValidateWithWarnings` warnings would NOT have
+answered it: they go to `logger.Info` only (`model_controller.go`), never to a condition or
+an event, so they are invisible to `kubectl describe`.
+
+## What survives
+
+Two measured results, both still true and neither recorded anywhere else:
+
+- **Ledger D70's "CEL is impossible here" is node-local, not spec-wide.** A *spec-level*
+  CEL rule installs fine on Kubernetes 1.31 with the untyped
+  `placement.maxPricePerHour` node as a descendant. D70 remains correct about that node;
+  it does not generalize. Anyone reading `price.go`'s "do not re-add a CEL marker without
+  re-reading that entry" should know the finding's real scope.
+- **A schema tombstone works, and needs both halves.** CRD pruning runs *before* CEL
+  validation, so a removed field must stay declared in the Go struct or the rule never
+  fires; and stored objects are never re-admitted, so admission alone cannot protect a
+  migration — the reconcile path has to refuse them too. Verified against a live API
+  server: the tombstone rejects with our own message.
+
+Everything below this line is the original proposal, retained unchanged for that evidence.
+It is not a plan of record.
+
+---
 
 ## Goal
 
