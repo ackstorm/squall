@@ -39,6 +39,19 @@ prometheusRule:
   enabled: false
   labels: {}
 
+# Optional Grafana dashboard (dashboards/squall.json), shipped as a ConfigMap
+# for the kube-prometheus-stack Grafana sidecar. Its panels read the series
+# the ServiceMonitors above produce.
+dashboards:
+  enabled: false
+  # Must match the sidecar's label and value (kube-prometheus-stack defaults).
+  label: grafana_dashboard
+  labelValue: "1"
+  # Grafana folder, via the grafana_folder annotation. Honoured only when the
+  # sidecar runs with folderAnnotation=grafana_folder. Empty: default folder.
+  folder: ""
+  labels: {}
+
 controller:
   serviceAccountName: controller-manager
   replicas: 2
