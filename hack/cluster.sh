@@ -195,13 +195,16 @@ build_and_load_images() {
     done
     [ "${failed}" -eq 0 ] || exit 1
 
-    # dstack is pulled once and loaded, so the cluster never reaches the
-    # network during a test run.
-    docker image inspect "${DSTACK_IMAGE}" >/dev/null 2>&1 || docker pull "${DSTACK_IMAGE}"
-    kind load docker-image "${DSTACK_IMAGE}" --name "${CLUSTER_NAME}"
-
-    docker image inspect "${POSTGRES_IMAGE}" >/dev/null 2>&1 || docker pull "${POSTGRES_IMAGE}"
-    kind load docker-image "${POSTGRES_IMAGE}" --name "${CLUSTER_NAME}"
+    # dstack and postgres are pulled once, so the cluster never reaches the
+    # network during a test run. The node pulls them itself: they are
+    # multi-arch, and with Docker's containerd image store the host keeps only
+    # its own platform while `docker save` exports the whole index, so
+    # `kind load` fails with "content digest ... not found".
+    local node="${CLUSTER_NAME}-control-plane" img
+    for img in "${DSTACK_IMAGE}" "${POSTGRES_IMAGE}"; do
+        docker exec "${node}" crictl inspecti -o json "${img}" >/dev/null 2>&1 \
+            || docker exec "${node}" crictl pull "${img}"
+    done
 }
 
 # wait_for_operator_leadership blocks until squall-operator actually HOLDS its
