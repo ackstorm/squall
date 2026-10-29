@@ -11,6 +11,8 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+## [0.1.9] — 2026-10-29
+
 ### Added
 
 - **Optional Grafana dashboard in the chart.** `dashboards.enabled: true` ships
@@ -373,7 +375,8 @@ order to run this safely are listed.
   so a Model verified before upgrading keeps it empty until its run generation
   is replaced. Empty means "do not rewrite", which is the safe direction.
 
-[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/ackstorm/squall/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/ackstorm/squall/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/ackstorm/squall/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/ackstorm/squall/compare/v0.1.5...v0.1.6
