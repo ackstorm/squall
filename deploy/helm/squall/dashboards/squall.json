@@ -1,0 +1,1108 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Squall models, proxy demand, bundled dstack and the controller.",
+  "editable": false,
+  "graphTooltip": 1,
+  "links": [],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "squall"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "label": "Model namespace",
+        "type": "query",
+        "query": "label_values(squall_model_phase, exported_namespace)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values(squall_model_phase, exported_namespace)"
+      },
+      {
+        "name": "model",
+        "label": "Model",
+        "type": "query",
+        "query": "label_values(squall_model_phase{exported_namespace=~\"$namespace\"}, name)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "label_values(squall_model_phase{exported_namespace=~\"$namespace\"}, name)"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "title": "Squall",
+  "uid": "squall-overview",
+  "version": 1,
+  "panels": [
+    {
+      "type": "row",
+      "id": 100,
+      "title": "Models and proxy",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "min"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "min(up{job=~\"squall-controller-metrics|squall-proxy|dstack\"})",
+          "legendFormat": "targets",
+          "refId": "A"
+        }
+      ],
+      "title": "All Squall targets up",
+      "type": "stat",
+      "description": "1 when the controller, proxy and dstack targets are all scraped."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(squall_model_run_active{exported_namespace=~\"$namespace\",name=~\"$model\"})",
+          "legendFormat": "active runs",
+          "refId": "A"
+        }
+      ],
+      "title": "Active model runs",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(squall_proxy_requests_total{model=~\"$model\"}[$__rate_interval]))",
+          "legendFormat": "requests",
+          "refId": "A"
+        }
+      ],
+      "title": "Request rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "(sum(rate(squall_proxy_requests_total{model=~\"$model\",outcome=~\"rejected|failed\"}[$__rate_interval])) or vector(0)) / clamp_min(sum(rate(squall_proxy_requests_total{model=~\"$model\"}[$__rate_interval])), 1e-9)",
+          "legendFormat": "errors",
+          "refId": "A"
+        }
+      ],
+      "title": "Proxy error ratio",
+      "type": "stat",
+      "description": "rejected and failed requests over all requests. client_gone is the caller hanging up, not a proxy error."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (exported_namespace,name,phase) (squall_model_phase{exported_namespace=~\"$namespace\",name=~\"$model\"})",
+          "legendFormat": "{{exported_namespace}}/{{name}} — {{phase}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Model phase",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (exported_namespace,name) (squall_model_replicas{exported_namespace=~\"$namespace\",name=~\"$model\"})",
+          "legendFormat": "replicas {{exported_namespace}}/{{name}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (exported_namespace,name) (squall_model_run_active{exported_namespace=~\"$namespace\",name=~\"$model\"})",
+          "legendFormat": "runs {{exported_namespace}}/{{name}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Replicas and active runs",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (model,outcome) (rate(squall_proxy_requests_total{model=~\"$model\"}[$__rate_interval]))",
+          "legendFormat": "{{model}} / {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Traffic by outcome",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le,model) (rate(squall_proxy_request_duration_seconds_bucket{model=~\"$model\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{model}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le,model) (rate(squall_proxy_request_duration_seconds_bucket{model=~\"$model\"}[$__rate_interval])))",
+          "legendFormat": "p99 {{model}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Proxy latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (model) (squall_proxy_held_requests{model=~\"$model\"})",
+          "legendFormat": "held {{model}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (model) (squall_proxy_requests_in_flight{model=~\"$model\"})",
+          "legendFormat": "in flight {{model}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Demand waiting for capacity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (exported_namespace,name,backend,reason) (rate(squall_model_provisioning_outcomes_total{outcome=\"failure\",exported_namespace=~\"$namespace\",name=~\"$model\"}[$__rate_interval])) * 3600",
+          "legendFormat": "{{exported_namespace}}/{{name}} — {{backend}} / {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Provisioning failures /h",
+      "type": "timeseries",
+      "description": "Failed scale-up outcomes by backend and reason (no_capacity, insufficient_credit, rate_limited, other)."
+    },
+    {
+      "type": "row",
+      "id": 200,
+      "title": "dstack",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 31
+      },
+      "id": 21,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(dstack_run_count_total[$__range])) or vector(0)",
+          "legendFormat": "runs",
+          "refId": "A"
+        }
+      ],
+      "title": "Runs (range)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 31
+      },
+      "id": 22,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(dstack_run_count_failed_total[$__range])) or vector(0)",
+          "legendFormat": "failed",
+          "refId": "A"
+        }
+      ],
+      "title": "Failed runs (range)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 31
+      },
+      "id": 23,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center"
+      },
+      "targets": [
+        {
+          "expr": "sum(dstack_instance_gpu_count)",
+          "legendFormat": "observed GPUs",
+          "refId": "A"
+        }
+      ],
+      "title": "Observed GPUs (last scrape)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "id": 24,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (dstack_backend, dstack_fleet_name, dstack_gpu) (dstack_instance_gpu_count)",
+          "legendFormat": "{{dstack_backend}} / {{dstack_fleet_name}} / {{dstack_gpu}}",
+          "refId": "A"
+        }
+      ],
+      "title": "GPU inventory by backend and fleet",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "id": 25,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (dstack_backend, dstack_fleet_name, dstack_gpu) (dstack_instance_price_dollars_per_hour)",
+          "legendFormat": "{{dstack_backend}} / {{dstack_fleet_name}} / {{dstack_gpu}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Hourly GPU price",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 44
+      },
+      "id": 26,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, run_type) (rate(dstack_submit_to_provision_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p50 {{run_type}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, run_type) (rate(dstack_submit_to_provision_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95 {{run_type}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Submit-to-provision latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 44
+      },
+      "id": 27,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(dstack_run_count_total[$__rate_interval])",
+          "legendFormat": "all runs",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(dstack_run_count_failed_total[$__rate_interval])",
+          "legendFormat": "failed",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(dstack_run_count_done_total[$__rate_interval])",
+          "legendFormat": "done",
+          "refId": "C"
+        },
+        {
+          "expr": "rate(dstack_run_count_terminated_total[$__rate_interval])",
+          "legendFormat": "terminated",
+          "refId": "D"
+        }
+      ],
+      "title": "Run activity by outcome",
+      "type": "timeseries"
+    },
+    {
+      "type": "row",
+      "id": 300,
+      "title": "Operator",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      },
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "min": 0,
+              "max": 1,
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 0,
+            "y": 53
+          },
+          "id": 31,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "max(up{job=\"squall-controller-metrics\"})",
+              "legendFormat": "Prometheus target",
+              "refId": "A"
+            }
+          ],
+          "title": "Controller target up",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 8,
+            "y": 53
+          },
+          "id": 32,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum by (controller) (rate(controller_runtime_reconcile_total{job=\"squall-controller-metrics\"}[$__rate_interval]))",
+              "legendFormat": "{{controller}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Reconciliations per second",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 8,
+            "x": 16,
+            "y": 53
+          },
+          "id": 33,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum by (controller) (rate(controller_runtime_reconcile_errors_total{job=\"squall-controller-metrics\"}[$__rate_interval]))",
+              "legendFormat": "{{controller}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Reconcile errors per second",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 59
+          },
+          "id": 34,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, controller) (rate(controller_runtime_reconcile_time_seconds_bucket{job=\"squall-controller-metrics\"}[$__rate_interval])))",
+              "legendFormat": "p95 {{controller}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Reconcile latency p95",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 59
+          },
+          "id": 35,
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum by (name) (workqueue_depth{job=\"squall-controller-metrics\"})",
+              "legendFormat": "{{name}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Workqueue depth",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 67
+          },
+          "id": 36,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "expr": "go_goroutines{job=\"squall-controller-metrics\"}",
+              "legendFormat": "goroutines",
+              "refId": "A"
+            }
+          ],
+          "title": "Goroutines",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 67
+          },
+          "id": 37,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "expr": "go_memstats_heap_alloc_bytes{job=\"squall-controller-metrics\"}",
+              "legendFormat": "heap allocated",
+              "refId": "A"
+            }
+          ],
+          "title": "Heap allocated",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 67
+          },
+          "id": 38,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "expr": "rate(process_cpu_seconds_total{job=\"squall-controller-metrics\"}[$__rate_interval])",
+              "legendFormat": "CPU",
+              "refId": "A"
+            }
+          ],
+          "title": "Process CPU",
+          "type": "timeseries"
+        }
+      ]
+    }
+  ]
+}

@@ -11,6 +11,14 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+### Added
+
+- **Optional Grafana dashboard in the chart.** `dashboards.enabled: true` ships
+  `dashboards/squall.json` as a ConfigMap for the kube-prometheus-stack Grafana sidecar,
+  with `dashboards.folder` for the `grafana_folder` annotation. Off by default. It reads the
+  series the ServiceMonitors produce, scoped to Squall's own scrape jobs, and filters
+  Models by `exported_namespace` (see `docs/metrics.md`).
+
 ## [0.1.8] — 2026-09-07
 
 ### Changed

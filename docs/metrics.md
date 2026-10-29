@@ -24,6 +24,25 @@ serviceMonitor:
   scrapeTimeout: 10s
 ```
 
+The ServiceMonitors keep the Prometheus Operator's default `honorLabels: false`,
+so the target's own `namespace` label (the namespace Squall runs in) wins and a
+Model's namespace arrives as `exported_namespace`. Query Model metrics by
+`exported_namespace`, not `namespace`.
+
+## Grafana dashboard
+
+The chart ships one dashboard, `dashboards/squall.json` (uid `squall-overview`),
+as a ConfigMap for the kube-prometheus-stack Grafana sidecar. It needs the
+ServiceMonitors above and no other CRD:
+
+```yaml
+dashboards:
+  enabled: true
+  folder: Squall      # needs the sidecar's folderAnnotation=grafana_folder
+```
+
+Rows: models and proxy, bundled dstack, and the controller (collapsed).
+
 ## Squall metrics
 
 Controller model gauges use Kubernetes object names and controlled

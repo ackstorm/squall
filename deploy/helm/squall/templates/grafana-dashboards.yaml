@@ -1,0 +1,30 @@
+{{- /*
+One ConfigMap per dashboards/*.json. The kube-prometheus-stack Grafana sidecar
+loads plain ConfigMaps carrying the configured label, so this needs no
+Prometheus Operator CRD. The panels read the series the ServiceMonitors in
+servicemonitors.yaml produce, so enable both.
+*/}}
+{{- if .Values.dashboards.enabled }}
+{{- range $path, $_ := .Files.Glob "dashboards/*.json" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: squall-dashboard-{{ base $path | trimSuffix ".json" }}
+  namespace: {{ $.Values.namespace }}
+  labels:
+    app.kubernetes.io/name: squall
+    app.kubernetes.io/component: monitoring
+    {{ $.Values.dashboards.label }}: {{ $.Values.dashboards.labelValue | quote }}
+    {{- with $.Values.dashboards.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with $.Values.dashboards.folder }}
+  annotations:
+    grafana_folder: {{ . | quote }}
+  {{- end }}
+data:
+  {{ base $path }}: |-
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}
+{{- end }}
