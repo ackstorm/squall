@@ -25,14 +25,20 @@ description: Restore Go caches, pull pre-built devtools image from GHCR, fall ba
 runs:
   using: composite
   steps:
+    # One cache per job: each job compiles something different (lint, unit,
+    # envtest -race, e2e) and only a job that misses its key saves. A shared
+    # key is saved by whichever job finishes first; when that is Security,
+    # which compiles nothing, every other job hits an empty cache and never
+    # replaces it.
     - name: Cache Go module + build caches (mounted into devtools container)
       uses: actions/cache@v5  # v4.3.0
       with:
         path: |
           .gocache/build
           .gocache/gopath
-        key: ${{ runner.os }}-devtools-${{ hashFiles('**/go.sum', 'Dockerfile.devtools') }}
-        restore-keys: ${{ runner.os }}-devtools-
+          .gocache/.cache/golangci-lint
+        key: ${{ runner.os }}-devtools-${{ github.job }}-${{ hashFiles('**/go.sum', 'Dockerfile.devtools') }}
+        restore-keys: ${{ runner.os }}-devtools-${{ github.job }}-
 
     - name: Compute devtools image reference
       id: ref

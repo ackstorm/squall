@@ -1,7 +1,8 @@
 name: ci
 
-# PR-only: branch protection on main enforces the PR workflow, so the
-# pull_request event is the single CI trigger.
+# Gates run on pull_request. The push to main only warms the Go caches: a PR
+# can restore caches from its own ref or from main, so without this every new
+# PR starts cold. E2E is skipped on push (it builds images, not .gocache).
 #
 # The invariant that makes this file trustworthy: EVERY step below is
 # `./scripts/dev.sh make <target>`. CI never reimplements a local command, so
@@ -18,9 +19,16 @@ on:
       - 'NOTICE'
       - 'CODEOWNERS'
       - '.gitignore'
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - 'NOTICE'
+      - 'CODEOWNERS'
+      - '.gitignore'
 
-# main is PR-only (branch protection enforces). Post-merge content equals
-# PR head content, so re-running on push main is redundant.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -69,7 +77,6 @@ jobs:
   envtest:
     name: Envtest
     runs-on: ubuntu-latest
-    needs: unit
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6  # v4.3.1
@@ -120,9 +127,11 @@ jobs:
   e2e:
     name: E2E (kind + ginkgo)
     runs-on: ubuntu-latest
-    needs: [unit, envtest]
+    # Gated on unit only: envtest runs alongside, and e2e (the longest job)
+    # starts as soon as the cheap gate passes instead of after both.
+    needs: unit
     timeout-minutes: 30
-    if: "!github.event.pull_request.draft"
+    if: "github.event_name == 'pull_request' && !github.event.pull_request.draft"
     steps:
       - uses: actions/checkout@v6  # v4.3.1
 
