@@ -101,15 +101,22 @@ build_stamp() {
 # on paths that do not end with the node holding the new bytes, and every one
 # of the four times this trap fired, the load — not the build — was what
 # silently did nothing.
+#
+# Both sides compare the image CONFIG digest, which is what crictl reports as
+# the id. The host's `docker image inspect .Id` is not usable for that: with
+# Docker's containerd image store (the GitHub runner default since 2026-10-26)
+# it is the manifest digest, so it never matches even when the load worked.
+# docker save's manifest.json names the config blob under either store.
 verify_image_in_node() {
     local img="$1" host_id node_id
-    host_id="$(docker image inspect "${img}" --format '{{.Id}}' 2>/dev/null || true)"
+    host_id="$(docker save "${img}" 2>/dev/null | tar -xO manifest.json 2>/dev/null \
+        | sed -n 's/.*"Config":"[^"]*\([0-9a-f]\{64\}\)[^"]*".*/sha256:\1/p' | head -1 || true)"
     if [ -z "${host_id}" ]; then
         echo "hack/cluster.sh: ${img} was never built on the host" >&2
         return 1
     fi
     node_id="$(docker exec "${CLUSTER_NAME}-control-plane" \
-        crictl inspecti "${img}" -o json 2>/dev/null \
+        crictl inspecti -o json "${img}" 2>/dev/null \
         | sed -n 's/.*"id": "\(sha256:[0-9a-f]*\)".*/\1/p' | head -1 || true)"
     if [ "${host_id}" != "${node_id}" ]; then
         echo "hack/cluster.sh: ${img} in the node is '${node_id:-<absent>}'," >&2
