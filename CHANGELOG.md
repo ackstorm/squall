@@ -11,6 +11,35 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+## [0.1.10] — 2026-11-01
+
+### Changed
+
+- **The chart now runs dstack server 0.22.6** (was 0.21.3). No Squall code change was
+  needed; the e2e suite passes unchanged. It also brings upstream fixes for server hangs
+  that could leave cloud instances running untracked (0.22.3).
+
+  **`spec.hardStop` now actually fires on the Kubernetes backend.** dstack 0.22.0 enforces
+  `max_duration` on the server ([dstackai/dstack#4259](https://github.com/dstackai/dstack/issues/4259)),
+  terminating the job at its limit plus a 2-minute grace, so `hardStop: 24h` stops a run at
+  about 24h02m. Before, the runner signalled the wrapper shell and the workload survived.
+  **Upgrade note:** a job already running when the dstack server is upgraded stays
+  unenforced until it is recreated — recreate awake runs after rolling this out.
+
+### Fixed
+
+- **A Model waking or recreating is now re-checked every 15s.** dstack is not a
+  Kubernetes object, so nothing re-enqueued a Model when its run died. A pinned Model whose
+  run failed with no capacity sat `Waking` on the dead run indefinitely, never retrying, and
+  `provisioningTimeout` was never enforced for it. Expect one extra dstack `Get` per
+  waking Model every 15s.
+- **The no-capacity retry backoff now paces every recreate, not every other one.** Each
+  failure was judged against the previous run's timestamp, so half the recreates went out
+  immediately ([#4](https://github.com/ackstorm/squall/issues/4)).
+- **`SquallModelExceededMaxLifetime` no longer fires for idle on-demand Models.**
+  `squall_model_age_seconds` counted time asleep because the run id survives the sleep
+  flip; it now measures the current wake only ([#23](https://github.com/ackstorm/squall/issues/23)).
+
 ## [0.1.9] — 2026-10-29
 
 ### Added
@@ -375,7 +404,8 @@ order to run this safely are listed.
   so a Model verified before upgrading keeps it empty until its run generation
   is replaced. Empty means "do not rewrite", which is the safe direction.
 
-[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.10...HEAD
+[0.1.10]: https://github.com/ackstorm/squall/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/ackstorm/squall/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/ackstorm/squall/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/ackstorm/squall/compare/v0.1.6...v0.1.7
