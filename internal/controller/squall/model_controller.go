@@ -956,7 +956,15 @@ func priceAsFloat64(p squallv1alpha1.Price) float64 {
 // provisioning data, and is absent only when dstack reports no price.
 func (r *ModelReconciler) recordMetrics(model *squallv1alpha1.Model, observedPerHour float64, uncontrolledSince *metav1.Time, runActive bool, now time.Time) {
 	if r.AgeMetrics != nil {
-		r.AgeMetrics.Observe(model.Namespace, model.Name, model.Status.RunID, model.Spec.MaxLifetime.Duration, now)
+		// Age is time AWAKE. status.runId survives the replicas:0 sleep flip
+		// (F17), so feeding it while asleep would accrue age at $0 and fire
+		// the maxLifetime alert on every on-demand Model eventually. An
+		// empty run id forgets the entry; the next wake starts from zero.
+		runID := ""
+		if runActive {
+			runID = model.Status.RunID
+		}
+		r.AgeMetrics.Observe(model.Namespace, model.Name, runID, model.Spec.MaxLifetime.Duration, now)
 	}
 	if r.PriceMetrics != nil {
 		var declared float64
