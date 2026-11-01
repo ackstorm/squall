@@ -81,3 +81,40 @@ func TestRecordOperationalMetricsCountsProvisioningFailureOnce(t *testing.T) {
 	}
 	t.Fatal("squall_model_provisioning_outcomes_total missing")
 }
+
+// An asleep on-demand Model keeps its status.runId (F17), so age must not
+// be reported for it: otherwise squall_model_age_seconds grows at $0 and
+// SquallModelExceededMaxLifetime fires for a Model that has not run a GPU
+// in weeks (issue #23).
+func TestRecordMetrics_AgeOnlyWhileAwake(t *testing.T) {
+	c := metrics.NewModelAgeCollector(nil)
+	r := ModelReconciler{AgeMetrics: c}
+	model := &squallv1alpha1.Model{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "squall", Name: "ollama-tiny"},
+		Spec:       squallv1alpha1.ModelSpec{MaxLifetime: metav1.Duration{Duration: 4 * time.Hour}},
+		Status:     squallv1alpha1.ModelStatus{RunID: "run-1"},
+	}
+	ageSamples := func() int {
+		reg := prometheus.NewRegistry()
+		reg.MustRegister(c)
+		mfs, err := reg.Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, mf := range mfs {
+			if mf.GetName() == "squall_model_age_seconds" {
+				return len(mf.GetMetric())
+			}
+		}
+		return 0
+	}
+
+	r.recordMetrics(model, 0, nil, true, time.Now())
+	if got := ageSamples(); got != 1 {
+		t.Fatalf("awake: age samples = %d, want 1", got)
+	}
+	r.recordMetrics(model, 0, nil, false, time.Now())
+	if got := ageSamples(); got != 0 {
+		t.Fatalf("asleep with runId kept: age samples = %d, want 0", got)
+	}
+}

@@ -77,7 +77,7 @@ func TestApplyDurationsFor_AlwaysSendsZeroIdle(t *testing.T) {
 
 func TestReportProvisioningCondition_MaxDurationIsAHardStop(t *testing.T) {
 	model := &squallv1alpha1.Model{}
-	reportProvisioningCondition(model, &dstack.ProvisioningFailure{RunID: "r1", Reason: "max_duration_exceeded", Message: "max duration exceeded"}, squallv1alpha1.ModelPhaseDead)
+	reportProvisioningCondition(model, &dstack.ProvisioningFailure{RunID: "r1", Reason: "max_duration_exceeded", Message: "max duration exceeded"}, squallv1alpha1.ModelPhaseDead, time.Now())
 	for _, c := range model.Status.Conditions {
 		if c.Type == squallv1alpha1.ConditionProvisioning && c.Reason == squallv1alpha1.ReasonHardStopFired {
 			return
@@ -390,7 +390,8 @@ func TestReconcile_AwakeOnDemandNoAction_RequeuesForIdleCheck(t *testing.T) {
 // TestReconcile_PinnedAwake_DoesNotRequeue is the AC17 counterpart: a
 // pinned Model (MinReplicas == 1) never sleeps (Decide, phase.go), so
 // polling it on a timer for an idle check it can never act on would just be
-// wasted reconciles.
+// wasted reconciles. The run is Ready on purpose: a pinned Model still
+// Waking DOES requeue, for death detection and provisioningTimeout.
 func TestReconcile_PinnedAwake_DoesNotRequeue(t *testing.T) {
 	scheme := k8sruntime.NewScheme()
 	if err := squallv1alpha1.AddToScheme(scheme); err != nil {
@@ -407,7 +408,7 @@ func TestReconcile_PinnedAwake_DoesNotRequeue(t *testing.T) {
 		},
 		Spec: spec,
 		Status: squallv1alpha1.ModelStatus{
-			Phase: squallv1alpha1.ModelPhaseWaking,
+			Phase: squallv1alpha1.ModelPhaseReady,
 			RunID: "run-1",
 		},
 	}
@@ -420,7 +421,7 @@ func TestReconcile_PinnedAwake_DoesNotRequeue(t *testing.T) {
 
 	r := &ModelReconciler{
 		Client:       fakeClient,
-		DstackClient: &fixedRunDstackClient{run: &dstack.Run{Name: model.Name, RunID: "run-1", Replicas: 1}},
+		DstackClient: &fixedRunDstackClient{run: &dstack.Run{Name: model.Name, RunID: "run-1", Replicas: 1, ProbesReady: true}},
 	}
 
 	res, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -826,7 +827,7 @@ func TestReportProvisioningCondition_RefreshesTimestampPerFailedRun(t *testing.T
 	report := func(runID string) metav1.Condition {
 		reportProvisioningCondition(model, &dstack.ProvisioningFailure{
 			RunID: runID, Reason: "failed_to_start_due_to_no_capacity", Message: "no offers",
-		}, squallv1alpha1.ModelPhaseRecreating)
+		}, squallv1alpha1.ModelPhaseRecreating, time.Now())
 		return *meta.FindStatusCondition(model.Status.Conditions, squallv1alpha1.ConditionProvisioning)
 	}
 
