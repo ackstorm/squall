@@ -470,14 +470,11 @@ these reasons:
 - **Marketplace hosts are not data processors.** Internal, non-regulated workloads only.
 - **The unhealthy teardown can flap.** A model broken by configuration rather than by machine
   re-wakes on the next request.
-- **`spec.hardStop` does not fire on the Kubernetes backend.** It is wired correctly — the
-  value reaches dstack's `max_duration` and the runner's submit body — but it is not enforced:
-  a job with `max_duration: 2m` was still running at 621s, and one live Model ran 104 minutes
-  against a 60-minute limit. Root-caused to dstack wrapping commands in `sh -i -c`, so the
-  timeout signals the wrapper shell while the workload is reparented and survives; reported
-  upstream as [dstackai/dstack#4259](https://github.com/dstackai/dstack/issues/4259). **Do not
-  treat `hardStop` as the bound that survives a dead controller.** Whether VM backends enforce
-  it is untested. Ledger D161.
+- **`spec.hardStop` needs dstack >= 0.22.0.** Earlier servers left `max_duration` to the
+  runner, which on the Kubernetes backend signalled the wrapper shell instead of the workload,
+  so it never fired ([dstackai/dstack#4259](https://github.com/dstackai/dstack/issues/4259)).
+  Since 0.22.0 the server enforces it with a 2-minute grace. A job already running when the
+  server is upgraded stays runner-only until it is recreated. Ledger D161.
 
 Full list in the [CHANGELOG](CHANGELOG.md); the running engineering ledger is
 [docs/references/deviations-and-findings.md](docs/references/deviations-and-findings.md).
