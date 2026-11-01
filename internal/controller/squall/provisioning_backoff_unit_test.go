@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -55,11 +56,14 @@ func (d *noCapacityDstack) Apply(_ context.Context, req dstack.ApplyRequest) (*d
 	return &r, nil
 }
 
-// TestReconcile_NoCapacity_PacesRecreates drives Reconcile pass after pass
-// against a backend that can never satisfy the run, and asserts D163's
-// ProvisioningRetryBackoff actually bounds how often a fresh run is minted.
-// Without the backoff this loop recreates every failAfter (15s): ~20 runs
-// in five minutes.
+// TestReconcile_NoCapacity_PacesRecreates drives Reconcile the way
+// controller-runtime does — again at once after a status write (the Model
+// watch has no predicate), after RequeueAfter when one is asked for, and
+// NEVER otherwise: dstack is not a Kubernetes object, so nothing else wakes
+// the controller when a run dies. Against a backend that can never satisfy
+// the run it asserts both halves of issue #4: retries keep happening (wake
+// fails open; a pinned Model once sat Waking on a dead run because no pass
+// requeued), and D163's backoff bounds them.
 func TestReconcile_NoCapacity_PacesRecreates(t *testing.T) {
 	model := pinnedColdModel("no-capacity", nil)
 	scheme := k8sruntime.NewScheme()
@@ -74,23 +78,56 @@ func TestReconcile_NoCapacity_PacesRecreates(t *testing.T) {
 		clk:                     clk, failAfter: 15 * time.Second,
 	}
 	r := &ModelReconciler{Client: c, DstackClient: dc, Clock: clk}
+	key := client.ObjectKeyFromObject(model)
+	// Status content, not resourceVersion: the fake client bumps the
+	// version even for an empty merge patch, the real API server does not.
+	status := func() squallv1alpha1.ModelStatus {
+		var m squallv1alpha1.Model
+		if err := c.Get(context.Background(), key, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m.Status
+	}
 
 	const window = 5 * time.Minute
-	for elapsed := time.Duration(0); elapsed < window; elapsed += 5 * time.Second {
-		if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(model)}); err != nil {
-			t.Fatalf("Reconcile at +%v: %v", elapsed, err)
+	start := clk.Now()
+	for pass := 0; clk.Now().Sub(start) < window; pass++ {
+		if pass > 500 {
+			t.Fatal("more than 500 passes in the window: a status write is retriggering Reconcile in a hot loop")
 		}
-		clk.Advance(5 * time.Second)
+		before := status()
+		res, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})
+		if err != nil {
+			t.Fatalf("Reconcile at +%v: %v", clk.Now().Sub(start), err)
+		}
+		switch {
+		case !equality.Semantic.DeepEqual(status(), before):
+			// Status write: the watch event re-enqueues immediately.
+		case res.RequeueAfter > 0:
+			clk.Advance(res.RequeueAfter)
+		default:
+			t.Fatalf("Reconcile at +%v asked for no requeue while the pinned Model wants a run (phase %q, %d runs minted): "+
+				"nothing else will ever revisit it", clk.Now().Sub(start), mustPhase(t, c, key), dc.applies)
+		}
 	}
 
 	// One attempt per (failAfter + backoff) plus the first, with slack for
-	// the 5s pass granularity.
+	// the requeue granularity.
 	maxApplies := int(window/(dc.failAfter+ProvisioningRetryBackoff)) + 2
 	if dc.applies > maxApplies {
 		t.Fatalf("minted %d runs in %v against a backend with no capacity, want <= %d: the D163 backoff is not pacing recreates",
 			dc.applies, window, maxApplies)
 	}
-	if dc.applies < 2 {
-		t.Fatalf("minted %d runs, want >= 2: wake must stay fail-open and keep retrying", dc.applies)
+	if dc.applies < 3 {
+		t.Fatalf("minted %d runs in %v, want >= 3: wake must stay fail-open and keep retrying", dc.applies, window)
 	}
+}
+
+func mustPhase(t *testing.T, c client.Client, key client.ObjectKey) squallv1alpha1.ModelPhase {
+	t.Helper()
+	var m squallv1alpha1.Model
+	if err := c.Get(context.Background(), key, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m.Status.Phase
 }

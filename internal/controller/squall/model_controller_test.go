@@ -431,8 +431,11 @@ func TestReconcile_ConcurrentFlips_LoserFailsLoudlyAndRequeues(t *testing.T) {
 		switch {
 		case o.err == nil:
 			successes++
-			if o.res != (ctrl.Result{}) {
-				t.Errorf("winning Reconcile returned %+v, want zero Result", o.res)
+			// The winner just woke a cold Model, so it is Waking and must be
+			// revisited on a timer: nothing else reports the run dying or
+			// becoming Ready.
+			if o.res.RequeueAfter <= 0 {
+				t.Errorf("winning Reconcile returned %+v, want a timed requeue for the Waking Model", o.res)
 			}
 		case errors.Is(o.err, dstack.ErrResourceChanged):
 			failures++

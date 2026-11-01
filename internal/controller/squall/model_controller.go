@@ -483,10 +483,15 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	r.recordMetrics(&model, observedPerHour, metricUncontrolledSince, observed.Run != nil && observed.Run.Replicas > 0, now)
 	r.recordOperationalMetrics(&model, observed, original.Status, now)
 
-	// See IdleRequeueInterval's doc comment: an awake, on-demand Model
-	// with nothing to actuate this pass must be re-evaluated later on a
-	// timer, or the §6 idle-sleep flip never fires once demand stops.
-	if observed.Run != nil && observed.Run.Replicas > 0 && model.Spec.MinReplicas == 0 {
+	// dstack is not a Kubernetes object: nothing wakes this controller when
+	// a run dies, becomes Ready, or a provisioning backoff lapses, so those
+	// states are re-evaluated on a timer. An awake on-demand Model needs it
+	// for the §6 idle-sleep flip (see IdleRequeueInterval). A Waking or
+	// Recreating one (throttled included) needs it for F20 death detection,
+	// the D163 retry and provisioningTimeout — without it a pinned Model
+	// whose run failed sat Waking on the dead run indefinitely (issue #4).
+	awakeOnDemand := observed.Run != nil && observed.Run.Replicas > 0 && model.Spec.MinReplicas == 0
+	if awakeOnDemand || newPhase == squallv1alpha1.ModelPhaseWaking || newPhase == squallv1alpha1.ModelPhaseRecreating {
 		return ctrl.Result{RequeueAfter: r.idleRequeueInterval()}, nil
 	}
 
