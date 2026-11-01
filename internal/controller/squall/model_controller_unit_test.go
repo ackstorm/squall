@@ -77,7 +77,7 @@ func TestApplyDurationsFor_AlwaysSendsZeroIdle(t *testing.T) {
 
 func TestReportProvisioningCondition_MaxDurationIsAHardStop(t *testing.T) {
 	model := &squallv1alpha1.Model{}
-	reportProvisioningCondition(model, &dstack.ProvisioningFailure{RunID: "r1", Reason: "max_duration_exceeded", Message: "max duration exceeded"}, squallv1alpha1.ModelPhaseDead)
+	reportProvisioningCondition(model, &dstack.ProvisioningFailure{RunID: "r1", Reason: "max_duration_exceeded", Message: "max duration exceeded"}, squallv1alpha1.ModelPhaseDead, time.Now())
 	for _, c := range model.Status.Conditions {
 		if c.Type == squallv1alpha1.ConditionProvisioning && c.Reason == squallv1alpha1.ReasonHardStopFired {
 			return
@@ -826,7 +826,7 @@ func TestReportProvisioningCondition_RefreshesTimestampPerFailedRun(t *testing.T
 	report := func(runID string) metav1.Condition {
 		reportProvisioningCondition(model, &dstack.ProvisioningFailure{
 			RunID: runID, Reason: "failed_to_start_due_to_no_capacity", Message: "no offers",
-		}, squallv1alpha1.ModelPhaseRecreating)
+		}, squallv1alpha1.ModelPhaseRecreating, time.Now())
 		return *meta.FindStatusCondition(model.Status.Conditions, squallv1alpha1.ConditionProvisioning)
 	}
 

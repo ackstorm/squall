@@ -226,6 +226,16 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	r.reconcileRunOwnership(&model, observed.Run, runName, logger)
 
+	// Record this pass's failure BEFORE Decide: provisioningBackoff reads
+	// the Provisioning condition from the status Decide is handed. Recorded
+	// after, Decide judged each fresh failure against the previous run's
+	// timestamp, and any failure landing more than ProvisioningRetryBackoff
+	// after that one recreated at once — every other recreate went unpaced.
+	// The post-Decide call below is idempotent for the same failure.
+	if observed.ProvisioningFailure != nil {
+		reportProvisioningCondition(&model, observed.ProvisioningFailure, "", now)
+	}
+
 	newPhase, action := Decide(observed, model.Status, model.Spec, demand, now)
 
 	if action.Apply && action.Replicas > 0 {
@@ -353,7 +363,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			"model", model.Name, "priorRunId", model.Status.RunID,
 			"nextAttemptAt", action.ThrottledUntil.UTC().Format(time.RFC3339))
 	}
-	reportProvisioningCondition(&model, observed.ProvisioningFailure, newPhase)
+	reportProvisioningCondition(&model, observed.ProvisioningFailure, newPhase, now)
 
 	if action.Unhealthy {
 		// LOUD. This spent money and then stopped spending it; an operator who
@@ -650,7 +660,7 @@ func reportProvisioningTimeout(logger logr.Logger, action Action, model *squallv
 	})
 }
 
-func reportProvisioningCondition(model *squallv1alpha1.Model, failure *dstack.ProvisioningFailure, phase squallv1alpha1.ModelPhase) {
+func reportProvisioningCondition(model *squallv1alpha1.Model, failure *dstack.ProvisioningFailure, phase squallv1alpha1.ModelPhase, now time.Time) {
 	if failure == nil {
 		if phase == squallv1alpha1.ModelPhaseReady {
 			meta.SetStatusCondition(&model.Status.Conditions, metav1.Condition{
@@ -694,6 +704,9 @@ func reportProvisioningCondition(model *squallv1alpha1.Model, failure *dstack.Pr
 		Status:  metav1.ConditionFalse,
 		Reason:  reason,
 		Message: message,
+		// The reconciler's clock, not metav1.Now(): provisioningBackoff
+		// compares this against Decide's now, so both must share one source.
+		LastTransitionTime: metav1.NewTime(now),
 	})
 }
 

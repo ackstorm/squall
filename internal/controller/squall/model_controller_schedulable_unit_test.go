@@ -235,7 +235,7 @@ func TestReportProvisioningConditionClassifiesFailure(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			model := &squallv1alpha1.Model{}
-			reportProvisioningCondition(model, &tt.failure, squallv1alpha1.ModelPhaseDead)
+			reportProvisioningCondition(model, &tt.failure, squallv1alpha1.ModelPhaseDead, time.Now())
 			cond := meta.FindStatusCondition(model.Status.Conditions, squallv1alpha1.ConditionProvisioning)
 			if cond == nil || cond.Reason != tt.want {
 				t.Fatalf("Provisioning condition = %+v, want reason %s", cond, tt.want)
