@@ -25,8 +25,9 @@ type modelKey struct{ Namespace, Name string }
 // namespace/name.
 //
 // "Age" is wall-clock time since this controller process first observed
-// the Model's current status.runId, kept in memory only — ledger D7
-// records that no persisted "since-when" anchor exists yet
+// the Model AWAKE on its current status.runId (recordMetrics passes an
+// empty run id while asleep, which forgets the entry), kept in memory
+// only — ledger D7 records that no persisted "since-when" anchor exists yet
 // (status.runStartedAt stays deliberately unimplemented, blocking task
 // 8.3's DESTRUCTIVE timeout). MaxLifetime is explicitly ALERT-ONLY and
 // never actuated (spec §5.2), so an in-memory baseline that resets on
