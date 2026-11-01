@@ -10,7 +10,7 @@
 # Squall's phases: namespaces -> model-mock (the engine double) -> a
 # development Postgres (test/e2e/cluster/02-postgres, dev-only per
 # deploy/helm/squall's values.yaml doctrine) -> the Helm chart (real dstack
-# 0.21.3 on that Postgres + squall-operator + squall-proxy) -> fixtures.
+# 0.22.6 on that Postgres + squall-operator + squall-proxy) -> fixtures.
 # No LiteLLM, no toolhive — those are not squall's concern.
 #
 # The dstack server here is the REAL one, not a fake. The only thing this

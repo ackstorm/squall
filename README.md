@@ -184,7 +184,7 @@ verbatim and `spec.placement.backends` is an unconstrained list of names, so **a
 dstack supports is usable from a `Model`**. Bringing up a new provider is a credentials and
 measurement exercise, not a change to squall.
 
-dstack 0.21.3 ships `aws`, `azure`, `gcp`, `oci`, `nebius`, `lambda`, `vastai`, `runpod`,
+dstack 0.22.6 ships `aws`, `azure`, `gcp`, `oci`, `nebius`, `lambda`, `vastai`, `runpod`,
 `digitalocean`, `amddevcloud`, `vultr`, `cloudrift`, `crusoe`, `datacrunch`, `hotaisle`,
 `jarvislabs`, `seeweb`, `verda`, `slurm`, `kubernetes` and dstack Sky.
 
