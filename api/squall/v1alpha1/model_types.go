@@ -464,7 +464,7 @@ type ModelSpec struct {
 	MaxLifetime metav1.Duration `json:"maxLifetime,omitempty"`
 
 	// HardStop is an on-demand-only dead-man's switch sent as dstack
-	// max_duration and enforced by the runner. Zero disables it with warning.
+	// max_duration and enforced by dstack. Zero disables it with warning.
 	//
 	// On-demand-only is literal: under MinReplicas: 1 the submission carries
 	// NO max_duration at all (model_controller.go gates the assignment on
@@ -472,15 +472,15 @@ type ModelSpec struct {
 	// it is set. Contrast MaxLifetime above, which stays meaningful in both
 	// modes precisely because it never actuates.
 	//
-	// DOES NOT FIRE ON THE KUBERNETES BACKEND (D161). It is wired
-	// correctly — the value reaches job_spec.max_duration and the runner's
-	// submit body — but it is not enforced. A live Model ran 104 minutes
-	// against max_duration: 3600, and a minimal reproduction (a plain
-	// nginx service, no squall involved, max_duration: 2m) was still
-	// "running" at 621 seconds — 4.96x its own limit — with an empty
-	// termination_reason, ending only when a human aborted it. Do not
-	// treat this as the bound that survives a dead controller. Whether a
-	// dockerized VM backend enforces it is untested.
+	// Requires dstack >= 0.22.0 (D161). Before that the runner alone
+	// enforced it and, on the Kubernetes backend, signalled the wrapper
+	// shell rather than the workload, so it never fired
+	// (dstackai/dstack#4259). Since 0.22.0 the dstack server itself
+	// terminates the job at max_duration plus a 2-minute grace, independent
+	// of the runner and of this controller. Measured on kind at 0.22.6: a
+	// max_duration: 2m service ended max_duration_exceeded 2m03s-2m24s
+	// after reaching running. A job already running when the dstack server
+	// is upgraded is left to the runner alone until it is recreated.
 	//
 	// It also bounds ONE CONTINUOUS job submission, not the Model's
 	// cumulative awake time: every sleep/wake cycle mints a new submission

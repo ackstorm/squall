@@ -226,7 +226,7 @@ dstack:
   # the e2e uses: no GPU, no bill. Set this to run on real hardware.
   #
   # The list is passed through to dstack's server/config.yml VERBATIM — it
-  # is dstack's own schema, not a squall one, so anything dstack 0.21.3
+  # is dstack's own schema, not a squall one, so anything dstack 0.22.6
   # accepts works here and nothing needs a chart change.
   #
   # Use ${VAR} placeholders and credentialsSecretName above rather than
@@ -298,7 +298,7 @@ dstack:
     # PINNED. Every measured fact this chart's dstack wiring relies on (the
     # required fleet, the proxy_jump requirement, the RBAC verb set) was
     # measured against exactly this version. Re-measure before bumping.
-    tag: "0.21.3"
+    tag: "0.22.6"
     pullPolicy: IfNotPresent
   # Required. Becomes the dstack "admin" user's token on first boot only
   # (DSTACK_SERVER_ADMIN_TOKEN — server/services/users.py); a later change has

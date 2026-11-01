@@ -79,7 +79,7 @@ func ValidateWithWarnings(spec squallv1alpha1.ModelSpec) ([]string, error) {
 			spec.HoldTimeout.Duration, spec.ProvisioningTimeout.Duration))
 	}
 	if spec.HardStop.Duration == 0 && spec.MinReplicas == 0 {
-		warnings = append(warnings, "hardStop is disabled: nothing would stop this Model's capacity if the controller died — and note hardStop does not currently fire on the Kubernetes backend either (D161), so enabling it is not by itself a dead-man's switch")
+		warnings = append(warnings, "hardStop is disabled: nothing would stop this Model's capacity if the controller died")
 	}
 
 	return warnings, nil
