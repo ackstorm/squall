@@ -11,6 +11,13 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+## [0.1.11] — 2026-11-02
+
+### Changed
+
+- **Binaries are built with Go 1.27.3** (was 1.26.6). No Squall code or behaviour change;
+  the developer toolchain moves with it, including golangci-lint v2 with the v1 rule set kept.
+
 ## [0.1.10] — 2026-11-01
 
 ### Changed
@@ -404,7 +411,8 @@ order to run this safely are listed.
   so a Model verified before upgrading keeps it empty until its run generation
   is replaced. Empty means "do not rewrite", which is the safe direction.
 
-[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.11...HEAD
+[0.1.11]: https://github.com/ackstorm/squall/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/ackstorm/squall/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/ackstorm/squall/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/ackstorm/squall/compare/v0.1.7...v0.1.8
