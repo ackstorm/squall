@@ -10,7 +10,7 @@ machine, the wait contract or the provider boundary, say which spec section it i
 
 ## Setting up
 
-Your host needs Docker and nothing else. The whole toolchain — Go 1.26.4, kubebuilder,
+Your host needs Docker and nothing else. The whole toolchain — Go 1.27.3, kubebuilder,
 controller-gen, kustomize, envtest assets, kind, helm, kubectl — lives in a container:
 
 ```sh

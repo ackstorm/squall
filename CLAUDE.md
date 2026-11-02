@@ -25,12 +25,12 @@ Plan: `docs/plans/2026-08-26-squall-v01-harness-and-scaffolding.md`.
 
 ## How to run anything — read before your first command
 
-**The host does not have the right Go.** The project targets **Go 1.26.6**; the toolchain
+**The host does not have the right Go.** The project targets **Go 1.27.3**; the toolchain
 lives in a container. Every `go`, `kubebuilder`, `controller-gen`, `golangci-lint` and `make`
 invocation goes through the wrapper:
 
 ```bash
-./scripts/dev.sh go version          # -> go1.26.6 linux/amd64
+./scripts/dev.sh go version          # -> go1.27.3 linux/amd64
 ./scripts/dev.sh make test-unit
 ./scripts/dev.sh make test-envtest
 ./scripts/dev.sh make qa-lint        # the lint target is qa-lint, NOT lint
