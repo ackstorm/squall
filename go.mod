@@ -1,6 +1,6 @@
 module github.com/ackstorm/squall
 
-go 1.26.6
+go 1.27.3
 
 godebug default=go1.23
 

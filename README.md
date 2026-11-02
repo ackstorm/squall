@@ -4,7 +4,7 @@
 
 ![status](https://img.shields.io/badge/status-pre--alpha-orange)
 ![release](https://img.shields.io/badge/release-v0.1.6-green)
-![go](https://img.shields.io/badge/go-1.26.6-00ADD8)
+![go](https://img.shields.io/badge/go-1.27.3-00ADD8)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 
 Squall gives a Kubernetes cluster access to GPU capacity it does not own. You declare a
@@ -496,14 +496,14 @@ references its section numbers.
 ## Development
 
 **The only thing your host needs is Docker.** No Go toolchain, no kubebuilder, no
-controller-gen, no kubectl. Squall targets Go 1.26.6, and pinning that on every developer
+controller-gen, no kubectl. Squall targets Go 1.27.3, and pinning that on every developer
 machine is not a thing anyone should have to do — so the whole toolchain lives in a container
 built from [`Dockerfile.devtools`](Dockerfile.devtools).
 
 ```bash
 make help                          # every target, self-documenting
 make doctor                        # preflight: docker, image, caches, tools. No network.
-./scripts/dev.sh go version        # -> go1.26.6
+./scripts/dev.sh go version        # -> go1.27.3
 ./scripts/dev.sh bash              # interactive shell in the devtools container
 ```
 

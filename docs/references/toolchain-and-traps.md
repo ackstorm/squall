@@ -25,7 +25,7 @@ repopulates `.gocache/` (module cache, build cache, envtest assets). Slow once, 
 Confirm the baseline before writing anything:
 
 ```bash
-./scripts/dev.sh go version          # go1.26.6 linux/amd64
+./scripts/dev.sh go version          # go1.27.3 linux/amd64
 ./scripts/dev.sh make test-unit      # green
 ./scripts/dev.sh make test-envtest   # green
 ./scripts/dev.sh make qa-lint        # green
@@ -58,6 +58,13 @@ because its `Version` lives in a subpackage; ours lives in `package main`, so th
 building weeks apart get different binaries with nothing changed in git, and the layer cache
 hides it. Now pinned to a commit SHA. There are no semver tags for that line. **The sibling
 project `../alitellm-operator` still has this hole** — worth telling whoever owns it.
+
+**golangci-lint must understand the image's Go export data.** A golangci-lint whose bundled
+`x/tools` predates the image's Go fails every package in `typecheck` with `export data version
+N is greater than maximum supported version M` — the code is fine, the linter is stale. Bump
+`GOLANGCI_LINT_VERSION` together with the base image. The v2 config pins `staticcheck.checks`
+and `goconst.exclude-types` to the v1 rule set; widening them is a lint-policy change with
+~60 findings to fix, not a toolchain bump.
 
 **`kustomize version` prints `(devel)`.** Inherent to `go install`; the binary is correct.
 Never assert on that string.

@@ -10,7 +10,7 @@
 # No `COPY . .`: only the paths a `go build` of these binaries actually needs
 # are copied, so the build context stays small and .git/secrets never reach
 # the builder stage.
-ARG GO_VERSION=1.26
+ARG GO_VERSION=1.27
 
 FROM golang:${GO_VERSION}-bookworm AS builder
 ARG CMD=controller
