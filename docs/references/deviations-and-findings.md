@@ -11,8 +11,8 @@ of their section with the next free ID. Never renumber. Never delete an entry â€
 
 **Commit hashes below predate v0.1.0.** This repository's history starts at a single `initial
 v0.1.0` commit; the 224-commit development history that these entries cite was squashed into
-it at release time and preserved out-of-band as a git bundle. A short hash here identifies a
-change in that archive, not a commit you can `git show`.
+it at release time and not kept. A short hash here is a label only: it identifies no commit
+you can `git show`, in this repository or anywhere else.
 ---
 ## A. Invented â€” the spec does not cover it
 | ID | What | Constraint it must satisfy | Status |
