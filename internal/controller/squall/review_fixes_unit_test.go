@@ -26,8 +26,8 @@ import (
 )
 
 // notReadyEndpointSlicesFor is endpointSlicesForServers' D104 sibling: each
-// entry carries serving=true and ready=false — a replica whose readiness probe
-// is failing, or that is draining through srv.Shutdown, but whose process
+// entry carries ready=false and serving=false, as the API server emits for a
+// non-terminating pod failing its readiness probe — a replica whose process
 // (and in-flight generations) may be very much alive.
 func notReadyEndpointSlicesFor(t *testing.T, readyAddrPorts, notReadyAddrPorts []string) []client.Object {
 	t.Helper()
@@ -37,7 +37,7 @@ func notReadyEndpointSlicesFor(t *testing.T, readyAddrPorts, notReadyAddrPorts [
 	}
 	for _, hp := range notReadyAddrPorts {
 		slice := endpointSliceFor(t, hp)
-		ready, serving := false, true
+		ready, serving := false, false
 		slice.Endpoints[0].Conditions = discoveryv1.EndpointConditions{Ready: &ready, Serving: &serving}
 		slices = append(slices, slice)
 	}
@@ -80,6 +80,9 @@ func TestGatherActivity_NotReadyReplicaWithInFlightWork_IsSeen(t *testing.T) {
 	}
 	if got.AllIdle {
 		t.Fatal("AllIdle = true with 40 generations streaming on the not-ready replica; sleep would kill them")
+	}
+	if drainEvidenceClean(got) {
+		t.Fatal("drain gate passed with 40 generations streaming on the not-ready replica")
 	}
 }
 

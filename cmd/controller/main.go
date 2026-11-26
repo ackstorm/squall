@@ -188,7 +188,9 @@ func main() {
 	uncontrolledMetrics := metrics.NewUncontrolledCollector(internalclock.RealClock{})
 	idleMetrics := metrics.NewIdleCollector(internalclock.RealClock{})
 	operationalMetrics := metrics.NewModelOperationalCollector()
-	ctrlmetrics.Registry.MustRegister(ageMetrics, priceMetrics, uncontrolledMetrics, idleMetrics, operationalMetrics)
+	reaperMetrics := metrics.NewReaperCollector()
+	ctrlmetrics.Registry.MustRegister(
+		ageMetrics, priceMetrics, uncontrolledMetrics, idleMetrics, operationalMetrics, reaperMetrics)
 
 	// ModelReconciler.DstackClient has no supported nil mode (see its own
 	// doc comment) — every real caller must set it, so fail fast rather
@@ -260,6 +262,7 @@ func main() {
 		// is what makes the "refuse to reap on a partial view" abort real.
 		Client:       mgr.GetAPIReader(),
 		DstackClient: dstackClient,
+		Metrics:      reaperMetrics,
 	}); err != nil {
 		setupLog.Error(err, "unable to start the orphan reaper")
 		os.Exit(1)

@@ -243,7 +243,7 @@ func Decide(
 	// replica that reached Ready at some point, while this describes a wake
 	// that never landed. Dead, not Asleep (F20), so the next attempt mints a
 	// fresh run rather than flipping replicas on a husk.
-	if provisioningDue(prior.WakeStartedAt, observed.Ready, spec.ProvisioningTimeout.Duration, now) {
+	if provisioningDue(prior, observed.Ready, spec.ProvisioningTimeout.Duration, now) {
 		return squallv1alpha1.ModelPhaseDead, Action{
 			Apply: true, Replicas: 0, Current: observed.Run, Alarm: true,
 			ProvisioningTimedOut: true, At: now,
@@ -392,11 +392,24 @@ func uncontrolledDue(since *metav1.Time, timeout time.Duration, hasDemand bool, 
 	return !hasDemand && timeout > 0 && since != nil && !since.IsZero() && now.Sub(since.Time) > timeout
 }
 
-func provisioningDue(wakeStartedAt *metav1.Time, ready bool, timeout time.Duration, now time.Time) bool {
+// provisioningDue measures continuous unreadiness: a run that was Ready on the
+// prior pass lost readiness just now and is never due; otherwise the anchor is
+// the later of the wake and the moment the Ready condition last changed.
+func provisioningDue(prior squallv1alpha1.ModelStatus, ready bool, timeout time.Duration, now time.Time) bool {
+	wakeStartedAt := prior.WakeStartedAt
 	if ready || timeout <= 0 || wakeStartedAt == nil || wakeStartedAt.IsZero() {
 		return false
 	}
-	return now.Sub(wakeStartedAt.Time) > timeout
+	anchor := wakeStartedAt.Time
+	if c := meta.FindStatusCondition(prior.Conditions, squallv1alpha1.ConditionReady); c != nil {
+		if c.Status == metav1.ConditionTrue {
+			return false
+		}
+		if c.LastTransitionTime.Time.After(anchor) {
+			anchor = c.LastTransitionTime.Time
+		}
+	}
+	return now.Sub(anchor) > timeout
 }
 
 // sleepDue is §6's fail-safe flip condition: clean, complete, idle

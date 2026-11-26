@@ -3,7 +3,7 @@
 **Scale-to-zero LLM serving on GPUs that are not in your cluster.**
 
 ![status](https://img.shields.io/badge/status-pre--alpha-orange)
-![release](https://img.shields.io/badge/release-v0.1.6-green)
+![release](https://img.shields.io/badge/release-v0.1.13-green)
 ![go](https://img.shields.io/badge/go-1.27.3-00ADD8)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 
@@ -125,7 +125,7 @@ See [Send it a request](#send-it-a-request) for why that decides your `holdTimeo
 The chart deploys squall **and a dstack server** — you do not need to run dstack yourself.
 
 ```bash
-helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.6 \
+helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.13 \
   --namespace squall-system --create-namespace \
   --set-string dstack.adminToken.value="$(openssl rand -hex 16)" \
   --set controller.env.dstackURL="http://dstack.squall-system.svc.cluster.local:3000"
@@ -138,7 +138,7 @@ until you do this, and `kubectl apply` of a Model using one fails with `unknown 
 
 ```bash
 kubectl apply --server-side -f \
-  https://github.com/ackstorm/squall/releases/download/v0.1.6/squall.ackstorm.ai_models.yaml
+  https://github.com/ackstorm/squall/releases/download/v0.1.13/squall.ackstorm.ai_models.yaml
 ```
 
 With no `dstack.backends`, dstack provisions onto your own cluster — no GPU, no bill, useful
@@ -213,7 +213,7 @@ metadata:
   namespace: squall-system       # any namespace works; this one already exists
 spec:
   engine: ollama
-  image: ollama/ollama:latest    # a tag is fine to try it; pin a digest for real use
+  image: ollama/ollama@sha256:c622a7adec67cf5bd7fe1802b7e26aa583a955a54e91d132889301f50c3e0bd0 # a digest is required; get one with `docker buildx imagetools inspect <image:tag>`
   model: qwen2.5:0.5b
   features: [TextGeneration]
 
@@ -221,7 +221,7 @@ spec:
   holdTimeout: 10m               # how long a request waits for a cold start
   idleTimeout: 10m               # idle window before the run — and the machine — release.
                                  # Also the demand signal's TTL: see Choosing idleTimeout.
-  provisioningTimeout: 20m       # a wake that never becomes Ready is destroyed
+  provisioningTimeout: 20m       # a run unready for this long is destroyed
   drainTimeout: 30s
   maxLifetime: 4h
 
@@ -518,7 +518,7 @@ and `./scripts/dev.sh make test-unit` are equivalent. Host-only targets (`make d
 | `make test-unit` | Pure logic. No envtest, no cluster. |
 | `make test-envtest` | Controller against a real API server, race-enabled. The CI gate. |
 | `make test-envtest-fast` | Same without `-race`, for the inner loop. Not a CI gate. |
-| `make e2e-full` | kind cluster + the ginkgo suite against a fake dstack. |
+| `make e2e-full` | kind cluster + the ginkgo suite against a real dstack server (Kubernetes backend, mock engine). |
 
 The envtest Kubernetes assets are pre-baked into the devtools image, so envtest never hits
 the network.

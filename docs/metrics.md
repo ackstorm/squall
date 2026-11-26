@@ -64,6 +64,8 @@ deleted Model's labels until the controller restarts, when all of them reset.
 | `squall_model_age_seconds` / `squall_model_max_lifetime_seconds` | gauges | `namespace,name` | Observed and declared lifetime |
 | `squall_model_price_per_hour` / `squall_model_max_price_per_hour` | gauges | `namespace,name` | Observed and declared hourly price |
 | `squall_model_uncontrolled_seconds` / `squall_model_uncontrolled_timeout_seconds` | gauges | `namespace,name` | Capacity without reliable idle evidence and its deadline |
+| `squall_reaper_last_success_timestamp_seconds` | gauge | none | Unix time of the last orphan sweep that returned no error; 0 until the first one. A standby replica stays at 0, so alert on `max()` |
+| `squall_reaper_refused_runs` | gauge | none | Runs no Model claims by name that are active and past the grace period, seen in the last sweep and not stopped: either unstamped, or stamped by a live Model under another name. On a shared dstack server other people's runs count here |
 
 Controller-runtime also exports reconcile counts and latency as
 `controller_runtime_reconcile_total` and

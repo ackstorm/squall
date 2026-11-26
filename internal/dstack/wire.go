@@ -146,11 +146,30 @@ func wireSecondsPtr(v *int) *time.Duration {
 	return &d
 }
 
-func wireSeconds(v *int) time.Duration {
-	if v == nil {
-		return 0
+// maxDurationWire decodes dstack's OptionalOffableDuration: an integer
+// number of seconds, the string "off", or null. "off" and null both mean no
+// maximum and decode to 0, the Run.MaxDuration value for "none".
+type maxDurationWire time.Duration
+
+func (m *maxDurationWire) UnmarshalJSON(b []byte) error {
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
 	}
-	return time.Duration(*v) * time.Second
+	switch v := v.(type) {
+	case nil:
+		*m = 0
+	case string:
+		if v != "off" {
+			return fmt.Errorf("dstack: unsupported max_duration %q", v)
+		}
+		*m = 0
+	case float64:
+		*m = maxDurationWire(time.Duration(v) * time.Second)
+	default:
+		return fmt.Errorf("dstack: unsupported max_duration %s", b)
+	}
+	return nil
 }
 
 type runSpecWire struct {
@@ -303,6 +322,18 @@ type deleteRunsRequest struct {
 	RunsNames []string `json:"runs_names"`
 }
 
+// listRunsRequest is the body of /api/runs/list. The server's page size is
+// capped at 100, and only_active drops finished runs. Pages are newest
+// first; the cursor continues after the last run of the previous page.
+type listRunsRequest struct {
+	OnlyActive bool `json:"only_active"`
+	Limit      int  `json:"limit"`
+	// The cursor is the last run of the previous page: submitted_at exactly
+	// as the server wrote it, and its id. Both are omitted on the first page.
+	PrevSubmittedAt string `json:"prev_submitted_at,omitempty"`
+	PrevRunID       string `json:"prev_run_id,omitempty"`
+}
+
 type stopRunsRequest struct {
 	RunsNames []string `json:"runs_names"`
 	Abort     bool     `json:"abort"`
@@ -326,9 +357,9 @@ type runWire struct {
 	RunSpec             struct {
 		RunName       string `json:"run_name"`
 		Configuration struct {
-			Replicas     replicasWire `json:"replicas"`
-			IdleDuration *int         `json:"idle_duration"`
-			MaxDuration  *int         `json:"max_duration"`
+			Replicas     replicasWire    `json:"replicas"`
+			IdleDuration *int            `json:"idle_duration"`
+			MaxDuration  maxDurationWire `json:"max_duration"`
 			// dstack echoes the probes it was created with. Reading
 			// ready_after from HERE rather than from a constant means
 			// readiness is judged against what this run actually has, even

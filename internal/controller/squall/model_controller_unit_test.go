@@ -387,12 +387,10 @@ func TestReconcile_AwakeOnDemandNoAction_RequeuesForIdleCheck(t *testing.T) {
 	}
 }
 
-// TestReconcile_PinnedAwake_DoesNotRequeue is the AC17 counterpart: a
-// pinned Model (MinReplicas == 1) never sleeps (Decide, phase.go), so
-// polling it on a timer for an idle check it can never act on would just be
-// wasted reconciles. The run is Ready on purpose: a pinned Model still
-// Waking DOES requeue, for death detection and provisioningTimeout.
-func TestReconcile_PinnedAwake_DoesNotRequeue(t *testing.T) {
+// TestReconcile_PinnedAwake_Requeues: a pinned Model (MinReplicas == 1)
+// never sleeps (Decide, phase.go) but its run can still die, and nothing
+// watches dstack, so a live run is re-evaluated on a timer.
+func TestReconcile_PinnedAwake_Requeues(t *testing.T) {
 	scheme := k8sruntime.NewScheme()
 	if err := squallv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add scheme: %v", err)
@@ -430,8 +428,8 @@ func TestReconcile_PinnedAwake_DoesNotRequeue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile error = %v, want nil", err)
 	}
-	if res != (ctrl.Result{}) {
-		t.Errorf("Reconcile result = %+v, want zero Result (pinned models never sleep, so polling for idle is wasted work)", res)
+	if res.RequeueAfter <= 0 {
+		t.Errorf("Reconcile result = %+v, want RequeueAfter > 0 so a dead pinned run is noticed", res)
 	}
 }
 

@@ -344,7 +344,7 @@ func TestListRuns_ReturnsAllLiveRuns(t *testing.T) {
 	s.MustApply(t, ApplyRequest{Name: "qwen", Replicas: 1})
 	s.MustApply(t, ApplyRequest{Name: "llama", Replicas: 0})
 
-	runs := s.ListRuns()
+	runs := s.ListRuns(false, 100)
 	if len(runs) != 2 {
 		t.Fatalf("ListRuns: got %d runs, want 2: %+v", len(runs), runs)
 	}
@@ -367,12 +367,30 @@ func TestListRuns_IncludesTerminalRunsWithStatus(t *testing.T) {
 	s.MustApply(t, ApplyRequest{Name: "qwen", Replicas: 1})
 	s.Terminate("qwen")
 
-	runs := s.ListRuns()
+	runs := s.ListRuns(false, 100)
 	if len(runs) != 1 {
 		t.Fatalf("ListRuns must still report a terminal run, got %+v", runs)
 	}
 	if runs[0].Status != statusTerminated {
 		t.Fatalf("ListRuns: Status = %q, want %q", runs[0].Status, statusTerminated)
+	}
+}
+
+func TestListRuns_OnlyActiveDropsTerminalAndLimitCaps(t *testing.T) {
+	s := New()
+	s.MustApply(t, ApplyRequest{Name: "a", Replicas: 1})
+	s.MustApply(t, ApplyRequest{Name: "b", Replicas: 1})
+	s.MustApply(t, ApplyRequest{Name: "dead", Replicas: 1})
+	s.Terminate("dead")
+
+	if runs := s.ListRuns(true, 100); len(runs) != 2 {
+		t.Fatalf("onlyActive: got %+v, want the two live runs", runs)
+	}
+	if runs := s.ListRuns(false, 100); len(runs) != 3 {
+		t.Fatalf("all: got %d runs, want 3", len(runs))
+	}
+	if runs := s.ListRuns(false, 1); len(runs) != 1 {
+		t.Fatalf("limit 1: got %d runs", len(runs))
 	}
 }
 
@@ -488,25 +506,79 @@ func TestApply_ActiveRunRefusesAnAddedIdleDuration(t *testing.T) {
 		t.Fatalf("identical sleep flip = %v, want accepted", err)
 	}
 
-	woken := s.MustApply(t, ApplyRequest{Name: "qwen", Replicas: 1, Current: mustGet(t, s, "qwen"), IdleDuration: &zero})
+	woken := s.MustApply(t, ApplyRequest{Name: "qwen", Replicas: 1, Current: mustGet(t, s), IdleDuration: &zero})
 	if _, err := s.Apply(ApplyRequest{Name: "qwen", Replicas: 0, Current: woken, IdleDuration: &zero}); err != nil {
 		t.Fatalf("sleep re-sending the stored idle_duration = %v, want accepted", err)
 	}
-	if _, err := s.Apply(ApplyRequest{Name: "qwen", Replicas: 1, Current: mustGet(t, s, "qwen")}); err != nil {
+	if _, err := s.Apply(ApplyRequest{Name: "qwen", Replicas: 1, Current: mustGet(t, s)}); err != nil {
 		t.Fatalf("wake dropping idle_duration from an ASLEEP run = %v: only an ACTIVE run refuses (D156 measured legs)", err)
 	}
 
-	awake := mustGet(t, s, "qwen")
+	awake := mustGet(t, s)
 	if _, err := s.Apply(ApplyRequest{Name: "qwen", Replicas: 0, Current: awake, IdleDuration: &zero}); !errors.Is(err, ErrCannotOverride) { // (C)
 		t.Fatalf("sleep flip that ADDS idle_duration = %v, want ErrCannotOverride", err)
 	}
 }
 
-func mustGet(t *testing.T, s *Server, name string) *Run {
+func mustGet(t *testing.T, s *Server) *Run {
 	t.Helper()
-	run, err := s.Get(name)
+	run, err := s.Get("qwen")
 	if err != nil {
-		t.Fatalf("Get(%q): %v", name, err)
+		t.Fatalf("Get(qwen): %v", err)
 	}
 	return run
+}
+
+// The submitted env is stored, echoed on Get and ListRuns, and part of the
+// override comparison: a different env on an ACTIVE run is refused.
+func TestApply_EnvIsStoredEchoedAndRefusedWhenChanged(t *testing.T) {
+	s := New()
+	env := map[string]string{"SQUALL_MODEL_UID": "uid-1"}
+	run := s.MustApply(t, ApplyRequest{Name: "qwen", Replicas: 1, Env: env})
+	if got := mustGet(t, s).Env["SQUALL_MODEL_UID"]; got != "uid-1" {
+		t.Fatalf("Get env = %q, want uid-1", got)
+	}
+	if got := s.ListRuns(true, 100)[0].Env["SQUALL_MODEL_UID"]; got != "uid-1" {
+		t.Fatalf("ListRuns env = %q, want uid-1", got)
+	}
+	if _, err := s.Apply(ApplyRequest{Name: "qwen", Replicas: 0, Current: run}); !errors.Is(err, ErrCannotOverride) {
+		t.Fatalf("flip that drops the env = %v, want ErrCannotOverride", err)
+	}
+	if _, err := s.Apply(ApplyRequest{Name: "qwen", Replicas: 0, Current: run, Env: env}); err != nil {
+		t.Fatalf("flip that re-sends the env: %v", err)
+	}
+}
+
+// ListRunsPage orders by submitted_at descending then id ascending and
+// continues after the cursor without losing or repeating a tied run.
+func TestListRunsPage_CursorWithTiedSubmittedAt(t *testing.T) {
+	s := New()
+	s.SetClock(clock.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
+	for _, n := range []string{"a", "b", "c", "d", "e"} {
+		s.MustApply(t, ApplyRequest{Name: n, Replicas: 1})
+	}
+	var all []Run
+	var after *ListCursor
+	for i := 0; i < 5; i++ {
+		page := s.ListRunsPage(true, 2, after)
+		if len(page) == 0 {
+			break
+		}
+		all = append(all, page...)
+		last := page[len(page)-1]
+		after = &ListCursor{SubmittedAt: last.SubmittedAt, RunID: last.RunID}
+	}
+	seen := map[string]bool{}
+	for i, r := range all {
+		if seen[r.Name] {
+			t.Fatalf("%s listed twice", r.Name)
+		}
+		seen[r.Name] = true
+		if i > 0 && all[i-1].RunID >= r.RunID {
+			t.Fatalf("ids not ascending within a tie: %s then %s", all[i-1].RunID, r.RunID)
+		}
+	}
+	if len(all) != 5 {
+		t.Fatalf("paged %d runs, want 5", len(all))
+	}
 }

@@ -439,3 +439,59 @@ func TestClassifyAttempt_404RetrySetMatchesBlockingPhases(t *testing.T) {
 		})
 	}
 }
+
+// directBackend is a RouteBackend whose Route supplies its own client, as
+// SSHBackend does for the direct path.
+type directBackend struct {
+	target *url.URL
+	client *http.Client
+}
+
+func (d directBackend) URL(string) (*url.URL, bool) { return d.target, true }
+func (d directBackend) Route(string) (*url.URL, *http.Client, bool) {
+	return d.target, d.client, true
+}
+
+// The direct path reaches the engine on a rented host: neither squall's
+// dstack token nor the caller's Authorization may be sent. The dstack path
+// still carries squall's token.
+func TestAttemptForward_AuthorizationByRoute(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		direct   bool
+		wantAuth string
+	}{
+		{"direct route sends no Authorization", true, ""},
+		{"dstack route sends squall's token", false, "Bearer dstack-secret-token"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotAuth string
+			var saw bool
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotAuth = r.Header.Get("Authorization")
+				_, saw = r.Header["Authorization"]
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(upstream.Close)
+			target, _ := url.Parse(upstream.URL)
+
+			b := directBackend{target: target}
+			if tt.direct {
+				b.client = upstream.Client()
+			}
+			h := &Handler{Backend: b, Cache: NewCache(), DstackToken: "dstack-secret-token"}
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			req.Header.Set("Authorization", "Bearer client-supplied-token")
+
+			resp, res, _ := h.attemptForward(context.Background(), req, "qwen", nil, squallv1alpha1.ModelPhaseReady)
+			if res != attemptCommit {
+				t.Fatalf("attemptForward result = %v, want commit", res)
+			}
+			defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+			if gotAuth != tt.wantAuth || (tt.wantAuth == "" && saw) {
+				t.Fatalf("upstream saw Authorization = %q (present=%v), want %q", gotAuth, saw, tt.wantAuth)
+			}
+		})
+	}
+}

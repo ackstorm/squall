@@ -205,7 +205,7 @@ func (h *Handler) attemptForward(ctx context.Context, r *http.Request, model str
 	// the SSH transport — the engine's 404 for a route it never had,
 	// committed to the caller as the model's own answer — or the SSH
 	// placeholder host with http.DefaultClient, which does not resolve.
-	target, fwdClient, ok := h.route(model)
+	target, fwdClient, direct, ok := h.route(model)
 	if !ok {
 		return nil, attemptRetry, errNoBackendURL
 	}
@@ -249,7 +249,11 @@ func (h *Handler) attemptForward(ctx context.Context, r *http.Request, model str
 	// the proxy (RFC 7230 §6.1) — forwarding Connection/TE/Upgrade verbatim
 	// breaks upstream connection reuse and can confuse an intermediary.
 	stripHopByHop(out.Header)
-	if h.DstackToken != "" {
+	if direct {
+		// The engine runs on a marketplace host: it sees neither squall's
+		// dstack token nor the caller's credentials.
+		out.Header.Del("Authorization")
+	} else if h.DstackToken != "" {
 		// Overwrite, don't Add: whatever the client sent here (if anything)
 		// authenticates the client to squall-proxy/LiteLLM, not squall-proxy
 		// to dstack. dstack must see squall's own token, never the caller's.
@@ -366,23 +370,25 @@ type RouteBackend interface {
 
 // route resolves one forward's URL AND transport together. Resolved per
 // request because a replica can be replaced underneath a Model, and a stale
-// tunnel would forward to a machine that is no longer serving it.
-func (h *Handler) route(model string) (*url.URL, *http.Client, bool) {
-	if rb, ok := h.Backend.(RouteBackend); ok {
+// tunnel would forward to a machine that is no longer serving it. direct is
+// true when the backend supplied its own transport, i.e. the request goes
+// straight to the engine rather than through dstack's proxy.
+func (h *Handler) route(model string) (target *url.URL, client *http.Client, direct, ok bool) {
+	if rb, isRB := h.Backend.(RouteBackend); isRB {
 		target, client, ok := rb.Route(model)
 		if !ok {
-			return nil, nil, false
+			return nil, nil, false, false
 		}
 		if client == nil {
-			client = http.DefaultClient
+			return target, http.DefaultClient, false, true
 		}
-		return target, client, true
+		return target, client, true, true
 	}
-	target, ok := h.Backend.URL(model)
+	target, ok = h.Backend.URL(model)
 	if !ok {
-		return nil, nil, false
+		return nil, nil, false, false
 	}
-	return target, http.DefaultClient, true
+	return target, http.DefaultClient, false, true
 }
 
 // hopByHopHeaders are connection-scoped per RFC 7230 §6.1 and are stripped

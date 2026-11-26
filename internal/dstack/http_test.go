@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestRunSpec_EncodesResourcesAndPlacement pins the JSON that actually
@@ -123,5 +124,28 @@ func TestSSHKeyPub_EncodesAndDecodes(t *testing.T) {
 				t.Fatalf("decoded SSHKeyPub = %q, want %q", run.SSHKeyPub, tt.key)
 			}
 		})
+	}
+}
+
+func TestDecodeRun_MaxDuration(t *testing.T) {
+	for _, tc := range []struct {
+		json string
+		want time.Duration
+	}{
+		{`"off"`, 0},
+		{`null`, 0},
+		{`3600`, time.Hour},
+	} {
+		run, err := decodeRun([]byte(`{"run_spec":{"configuration":{"max_duration":` + tc.json + `}}}`))
+		if err != nil {
+			t.Fatalf("max_duration %s: %v", tc.json, err)
+		}
+		if run.MaxDuration != tc.want {
+			t.Fatalf("max_duration %s: got %v, want %v", tc.json, run.MaxDuration, tc.want)
+		}
+	}
+	run, err := decodeRun([]byte(`{"run_spec":{"configuration":{}}}`))
+	if err != nil || run.MaxDuration != 0 {
+		t.Fatalf("absent max_duration: got %v, err %v", run.MaxDuration, err)
 	}
 }

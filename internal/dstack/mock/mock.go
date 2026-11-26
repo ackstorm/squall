@@ -5,7 +5,9 @@ package mock
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -48,8 +50,8 @@ var ErrDeleteActiveRun = errors.New("dstack mock: Cannot delete active runs")
 // first." MEASURED on dstack 0.21.2 (D115 addendum, D156) — the wording is
 // what classifyError keys off, so it is reproduced verbatim.
 //
-// The fake compares only the configuration fields it DECODES, which today
-// means idle_duration. That is the whole point: this refusal is the reason
+// The fake compares only the configuration fields it DECODES, which
+// means idle_duration and env. That is the whole point: this refusal is the reason
 // D156's rule exists ("anything added to configurationWire must be sent BY
 // DIRECTION"), so every field this fake learns to decode must join the
 // comparison below, or the guard goes quiet again.
@@ -97,6 +99,10 @@ type ApplyRequest struct {
 	// specs to dstack, and telling them apart is what makes the override
 	// refusal below reproducible.
 	IdleDuration *int
+
+	// Env is the configuration env as submitted. A different env on an
+	// active run is refused like a different idle_duration.
+	Env map[string]string
 }
 
 // Run is the fake's view of dstack run state, returned by Apply, Get and
@@ -127,6 +133,10 @@ type Run struct {
 	// seconds, nil when the key is absent — echoed back on Get exactly as
 	// dstack echoes run_spec.configuration.
 	IdleDuration *int
+
+	// Env is the stored configuration's env, echoed back on Get and
+	// ListRuns the way dstack echoes run_spec.configuration.
+	Env map[string]string
 }
 
 // service is the mutable per-name state the mock tracks.
@@ -165,6 +175,9 @@ type service struct {
 	// idleDuration is the run's stored idle_duration in whole seconds, nil
 	// when the stored configuration has no such key (see ApplyRequest).
 	idleDuration *int
+
+	// env is the run's stored configuration env.
+	env map[string]string
 }
 
 // sameSeconds compares two optional whole-second values the way dstack
@@ -282,6 +295,7 @@ func (s *Server) runFor(name string, svc *service) *Run {
 		ServiceURL:    "/proxy/services/main/" + name + "/",
 		SubmittedAt:   svc.submittedAt,
 		IdleDuration:  svc.idleDuration,
+		Env:           svc.env,
 	}
 }
 
@@ -307,7 +321,7 @@ func (s *Server) Apply(req ApplyRequest) (*Run, error) {
 		s.services[req.Name] = svc
 	case req.Current == nil || req.Current.RunID != svc.runID || req.Current.DeploymentNum != svc.deploymentNum:
 		return nil, ErrResourceChanged
-	case svc.replicas > 0 && !sameSeconds(svc.idleDuration, req.IdleDuration):
+	case svc.replicas > 0 && (!sameSeconds(svc.idleDuration, req.IdleDuration) || !maps.Equal(svc.env, req.Env)):
 		// MEASURED (D156, legs B and C): flipping an ACTIVE run — one with
 		// live replicas — to 0 is accepted when the spec is otherwise
 		// identical and REFUSED when idle_duration was newly added. Only
@@ -323,6 +337,7 @@ func (s *Server) Apply(req ApplyRequest) (*Run, error) {
 	svc.applyCount++
 	svc.instanceUp = true // this Apply call itself never releases the machine (F21)
 	svc.idleDuration = req.IdleDuration
+	svc.env = maps.Clone(req.Env)
 	if req.FleetIdleDuration > 0 {
 		svc.fleetIdleDuration = req.FleetIdleDuration
 	}
@@ -445,18 +460,47 @@ func (s *Server) Get(name string) (*Run, error) {
 	return s.runFor(name, svc), nil
 }
 
-// ListRuns returns every service the fake has ever applied, live or
-// terminal — what backs the reconcile loop's orphan diff (§5.2). Measured
-// (§9.4): dstack keeps a terminal run's record; Status, not presence, is
-// what tells a caller it is dead. Delete is the only surface that removes a
-// run from this list.
-func (s *Server) ListRuns() []Run {
+// ListCursor is dstack's list pagination cursor: the last run of the previous
+// page.
+type ListCursor struct {
+	SubmittedAt time.Time
+	RunID       string
+}
+
+// ListRuns returns the first page of what dstack's list route returns for
+// the same request.
+func (s *Server) ListRuns(onlyActive bool, limit int) []Run {
+	return s.ListRunsPage(onlyActive, limit, nil)
+}
+
+// ListRunsPage returns one page in dstack's order, submitted_at descending
+// then id ascending, starting after cursor: runs with an earlier submitted_at,
+// or the same submitted_at and a greater id. Every service the fake has
+// applied is listed, live or terminal (measured §9.4), unless onlyActive drops
+// the terminal ones.
+func (s *Server) ListRunsPage(onlyActive bool, limit int, after *ListCursor) []Run {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	runs := make([]Run, 0, len(s.services))
 	for name, svc := range s.services {
+		if onlyActive && svc.terminal {
+			continue
+		}
+		if after != nil && !svc.submittedAt.Before(after.SubmittedAt) &&
+			!(svc.submittedAt.Equal(after.SubmittedAt) && svc.runID > after.RunID) {
+			continue
+		}
 		runs = append(runs, *s.runFor(name, svc))
+	}
+	sort.Slice(runs, func(i, j int) bool {
+		if !runs[i].SubmittedAt.Equal(runs[j].SubmittedAt) {
+			return runs[i].SubmittedAt.After(runs[j].SubmittedAt)
+		}
+		return runs[i].RunID < runs[j].RunID
+	})
+	if len(runs) > limit {
+		runs = runs[:limit]
 	}
 	return runs
 }

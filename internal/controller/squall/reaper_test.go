@@ -15,6 +15,7 @@ import (
 
 	squallv1alpha1 "github.com/ackstorm/squall/api/squall/v1alpha1"
 	"github.com/ackstorm/squall/internal/dstack"
+	"github.com/ackstorm/squall/internal/metrics"
 )
 
 // reaperClient records what the reaper actually did to dstack.
@@ -277,4 +278,72 @@ type brokenLister struct{ client.Client }
 
 func (brokenLister) List(context.Context, client.ObjectList, ...client.ListOption) error {
 	return errors.New("api server unreachable")
+}
+
+func TestReaper_SuccessfulSweepStampsTheTimestampFromItsClock(t *testing.T) {
+	dc := &reaperClient{}
+	r := newReaper(t, dc)
+	r.Metrics = metrics.NewReaperCollector()
+	if got := reaperGauge(t, r.Metrics, lastSuccessGauge); got != 0 {
+		t.Fatalf("before any sweep = %v, want 0", got)
+	}
+	if _, err := r.Sweep(context.Background()); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got, want := reaperGauge(t, r.Metrics, lastSuccessGauge), float64(r.now().Unix()); got != want {
+		t.Fatalf("timestamp = %v, want %v", got, want)
+	}
+}
+
+func TestReaper_FailedSweepsLeaveTheTimestampUnchanged(t *testing.T) {
+	old := time.Now().Add(-time.Hour)
+	dc := &reaperClient{runs: []dstack.Run{{
+		Name: "ghost", Status: "running", SubmittedAt: old,
+		Env: map[string]string{ModelUIDEnvKey: "uid-of-a-deleted-model"},
+	}}}
+	r := newReaper(t, dc)
+	r.Metrics = metrics.NewReaperCollector()
+	first := time.Now().Add(-time.Hour)
+	r.Metrics.SweepSucceeded(first)
+	want := float64(first.Unix())
+
+	dc.listErr = errors.New("dstack unreachable")
+	if _, err := r.Sweep(context.Background()); err == nil {
+		t.Fatal("want the list failure reported")
+	}
+	if got := reaperGauge(t, r.Metrics, lastSuccessGauge); got != want {
+		t.Fatalf("after a failed run list = %v, want %v", got, want)
+	}
+
+	dc.listErr = nil
+	dc.stopErr = errors.New("stop refused")
+	if _, err := r.Sweep(context.Background()); err == nil {
+		t.Fatal("want the stop failure reported")
+	}
+	if got := reaperGauge(t, r.Metrics, lastSuccessGauge); got != want {
+		t.Fatalf("after a failed Stop = %v, want %v", got, want)
+	}
+}
+
+func TestReaper_RefusedGaugeCountsExactlyTheRefusedRuns(t *testing.T) {
+	old := time.Now().Add(-time.Hour)
+	live := model("live")
+	live.UID = "live-uid"
+	dc := &reaperClient{runs: []dstack.Run{
+		{Name: "theirs-1", Status: "running", SubmittedAt: old},
+		{Name: "theirs-2", Status: "running", SubmittedAt: old},
+		{Name: "too-young", Status: "running", SubmittedAt: time.Now()},
+		{Name: "dead", Status: "terminated", SubmittedAt: old},
+		{Name: "squall-live", Status: "running", SubmittedAt: old},
+		{Name: "orphan", Status: "running", SubmittedAt: old, Env: map[string]string{ModelUIDEnvKey: "gone"}},
+		{Name: "renamed", Status: "running", SubmittedAt: old, Env: map[string]string{ModelUIDEnvKey: "live-uid"}},
+	}}
+	r := newReaper(t, dc, live)
+	r.Metrics = metrics.NewReaperCollector()
+	if _, err := r.Sweep(context.Background()); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := reaperGauge(t, r.Metrics, "squall_reaper_refused_runs"); got != 3 {
+		t.Fatalf("refused = %v, want 3 (two unstamped, one stamped by a live Model)", got)
+	}
 }

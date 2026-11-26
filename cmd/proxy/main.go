@@ -66,6 +66,10 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// The informer and the key loader outlive the signal: a request held for
+	// a wake drains against live Model state, not a cache frozen at SIGTERM.
+	runCtx, stopRun := context.WithCancel(context.Background())
+	defer stopRun()
 
 	cfg, err := restConfig()
 	if err != nil {
@@ -82,7 +86,7 @@ func main() {
 
 	cache := proxy.NewCache()
 	go func() {
-		if err := proxy.RunInformerCache(ctx, dyn, namespace, cache); err != nil && ctx.Err() == nil {
+		if err := proxy.RunInformerCache(runCtx, dyn, namespace, cache); err != nil && runCtx.Err() == nil {
 			slog.Error("informer cache stopped", "err", err)
 		}
 	}()
@@ -128,13 +132,15 @@ func main() {
 	// without a published endpoint, every topology needing more than one SSH
 	// hop, and every failed dial fall through to exactly what ran before, so
 	// enabling this cannot fail a request that used to work.
+	var sshBackend *proxy.SSHBackend
 	sshKeyNamespace := envOr("SQUALL_SSH_KEY_NAMESPACE", podNamespace())
 	if sshKeyNamespace != "" {
-		backend = &proxy.SSHBackend{
+		sshBackend = &proxy.SSHBackend{
 			Inner:      backend,
 			Cache:      cache,
-			LoadSigner: replicaKeyLoader(ctx, dyn, sshKeyNamespace),
+			LoadSigner: replicaKeyLoader(runCtx, dyn, sshKeyNamespace),
 		}
+		backend = sshBackend
 	} else {
 		slog.Warn("no namespace for the replica SSH key: staying on dstack's proxy for every request",
 			"hint", "set SQUALL_SSH_KEY_NAMESPACE")
@@ -171,18 +177,30 @@ func main() {
 	}
 	srv := &http.Server{Addr: addr, Handler: mux}
 
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-	}()
-
 	slog.Info("squall-proxy listening", "addr", addr, "version", Version)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Error("listen failed", "err", err)
+	err = serve(ctx, srv, handler.MaxRequestDuration)
+	if sshBackend != nil {
+		sshBackend.Close()
+	}
+	if err != nil {
+		slog.Error("serve failed", "err", err)
 		os.Exit(1)
 	}
+}
+
+// serve runs srv until ctx is cancelled, then drains: in-flight requests get
+// up to drain to finish, and it returns only after Shutdown has.
+func serve(ctx context.Context, srv *http.Server, drain time.Duration) error {
+	errc := make(chan error, 1)
+	go func() { errc <- srv.ListenAndServe() }()
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), drain)
+	defer cancel()
+	return srv.Shutdown(shutdownCtx)
 }
 
 // newMux wires squall-proxy's routes. Extracted from main so the routing

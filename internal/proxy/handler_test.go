@@ -893,11 +893,8 @@ func TestHandler_ReadyOnArrival_GatewayFails_DoesNotRetry(t *testing.T) {
 	}
 }
 
-// TestCommit_SuccessOnlyOnDeliveredTwoXX pins evidence (b) to what it claims
-// to mean. Before 2026-08-31 a 500 recorded a success, which made the
-// controller's "no successful response in 15 minutes" teardown unable to fire
-// against exactly the replica it exists to catch: one answering, and answering
-// badly.
+// TestCommit_SuccessOnlyOnDeliveredTwoXX pins evidence (b): 2xx is a success,
+// 5xx a failure, and a 4xx (the caller's fault) records neither.
 func TestCommit_SuccessOnlyOnDeliveredTwoXX(t *testing.T) {
 	for _, tt := range []struct {
 		name         string
@@ -908,8 +905,11 @@ func TestCommit_SuccessOnlyOnDeliveredTwoXX(t *testing.T) {
 		{"200 counts as success", http.StatusOK, true, 0},
 		{"204 counts as success", http.StatusNoContent, true, 0},
 		{"500 is a failure", http.StatusInternalServerError, false, 1},
-		{"429 is a failure", http.StatusTooManyRequests, false, 1},
-		{"400 is a failure", http.StatusBadRequest, false, 1},
+		{"503 is a failure", http.StatusServiceUnavailable, false, 1},
+		{"302 records neither", http.StatusFound, false, 0},
+		{"429 records neither", http.StatusTooManyRequests, false, 0},
+		{"400 records neither", http.StatusBadRequest, false, 0},
+		{"422 records neither", http.StatusUnprocessableEntity, false, 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

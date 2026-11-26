@@ -7,12 +7,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/ackstorm/squall/internal/clock"
 	"github.com/ackstorm/squall/internal/dstack"
 	"github.com/ackstorm/squall/internal/dstack/mock"
 )
@@ -578,11 +581,10 @@ func TestClient_Delete_AlreadyAbsent_MapsToErrNotFound(t *testing.T) {
 	}
 }
 
-// TestClient_ListRuns_ReturnsAllKnownRuns backs the reconcile loop's orphan
-// diff (§5.2). Unlike this client's earlier, invented assumption, a
-// terminal run is NOT excluded — dstack keeps its record; Status is how a
-// caller tells it apart from a live one (F20, measured §9.4).
-func TestClient_ListRuns_ReturnsAllKnownRuns(t *testing.T) {
+// TestClient_ListRuns_ExcludesTerminalRuns backs the reconcile loop's orphan
+// diff (§5.2). ListRuns asks for active runs only, so a terminal run, which
+// dstack keeps listed otherwise, never reaches the caller.
+func TestClient_ListRuns_ExcludesTerminalRuns(t *testing.T) {
 	fake := mock.New()
 	srv := httptest.NewServer(mock.NewHTTPServer(fake, mock.ValidToken))
 	t.Cleanup(srv.Close)
@@ -604,15 +606,219 @@ func TestClient_ListRuns_ReturnsAllKnownRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRuns: %v", err)
 	}
-	if len(runs) != 3 {
-		t.Fatalf("ListRuns: got %d runs, want 3 (dstack keeps terminal runs too): %+v", len(runs), runs)
+	if len(runs) != 2 {
+		t.Fatalf("ListRuns: got %d runs, want 2 (terminal runs are not requested): %+v", len(runs), runs)
 	}
-	byName := map[string]dstack.Run{}
 	for _, r := range runs {
-		byName[r.Name] = r
+		if r.Name == "dead" {
+			t.Fatalf("ListRuns returned the terminal run: %+v", r)
+		}
 	}
-	if !byName["dead"].IsTerminal() {
-		t.Fatalf("ListRuns: %+v, want the terminal run reported with a terminal Status, not excluded", byName["dead"])
+}
+
+// listStub answers /api/runs/list with the given run bodies and records the
+// request body it received.
+func listStub(t *testing.T, runs []string) (*dstack.HTTPClient, *[]byte) {
+	t.Helper()
+	var got []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte("[" + strings.Join(runs, ",") + "]"))
+	}))
+	t.Cleanup(srv.Close)
+	return dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client()), &got
+}
+
+func stubRuns(n int) []string {
+	runs := make([]string, n)
+	for i := range runs {
+		runs[i] = fmt.Sprintf(`{"id":"id%d","status":"running","run_spec":{"run_name":"r%d","configuration":{}}}`, i, i)
+	}
+	return runs
+}
+
+// The marshalled body is asserted, not a decoded struct: a decoded struct
+// passes even when a key is absent (D166).
+func TestClient_ListRuns_SendsOnlyActiveAndLimit(t *testing.T) {
+	c, body := listStub(t, stubRuns(1))
+	if _, err := c.ListRuns(context.Background()); err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	for _, want := range []string{`"only_active":true`, `"limit":100`} {
+		if !bytes.Contains(*body, []byte(want)) {
+			t.Fatalf("list request body lacks %s: %s", want, *body)
+		}
+	}
+}
+
+// pagedFake serves n active runs from the fake over HTTP and records every
+// list request body. step is how far the fake clock moves after every
+// `every` applies; every 0 gives all runs the same submitted_at.
+func pagedFake(t *testing.T, n int, step time.Duration, every int) (*dstack.HTTPClient, *[][]byte) {
+	t.Helper()
+	fake := mock.New()
+	clk := clock.NewFakeClock(time.Date(2026, 1, 2, 3, 4, 5, 123456000, time.UTC))
+	fake.SetClock(clk)
+	var bodies [][]byte
+	h := mock.NewHTTPServer(fake, mock.ValidToken)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/runs/list" {
+			b, _ := io.ReadAll(r.Body)
+			bodies = append(bodies, b)
+			r.Body = io.NopCloser(bytes.NewReader(b))
+		}
+		h.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	for i := 0; i < n; i++ {
+		fake.MustApply(t, mock.ApplyRequest{Name: fmt.Sprintf("run-%03d", i), Replicas: 1})
+		if every > 0 && (i+1)%every == 0 {
+			clk.Advance(step)
+		}
+	}
+	return dstack.NewHTTPClient(srv.URL, "main", mock.ValidToken, srv.Client()), &bodies
+}
+
+func assertCompleteNoDuplicates(t *testing.T, runs []dstack.Run, n int) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, r := range runs {
+		if seen[r.Name] {
+			t.Fatalf("run %q listed twice", r.Name)
+		}
+		seen[r.Name] = true
+	}
+	if len(runs) != n || len(seen) != n {
+		t.Fatalf("got %d runs (%d distinct), want %d", len(runs), len(seen), n)
+	}
+}
+
+func TestClient_ListRuns_PagesThroughEveryActiveRun(t *testing.T) {
+	c, bodies := pagedFake(t, 250, time.Second, 1)
+	runs, err := c.ListRuns(context.Background())
+	if err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	assertCompleteNoDuplicates(t, runs, 250)
+	if len(*bodies) != 3 {
+		t.Fatalf("250 runs took %d requests, want 3", len(*bodies))
+	}
+}
+
+// Runs sharing a submitted_at across a page boundary are the case a
+// timestamp-only cursor loses or repeats: 7 runs per timestamp, so a group
+// straddles run 100 and run 200.
+func TestClient_ListRuns_EqualSubmittedAtAcrossPageBoundary(t *testing.T) {
+	c, _ := pagedFake(t, 250, time.Second, 7)
+	runs, err := c.ListRuns(context.Background())
+	if err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	assertCompleteNoDuplicates(t, runs, 250)
+}
+
+func TestClient_ListRuns_AllRunsSameSubmittedAt(t *testing.T) {
+	c, _ := pagedFake(t, 250, 0, 0)
+	runs, err := c.ListRuns(context.Background())
+	if err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	assertCompleteNoDuplicates(t, runs, 250)
+}
+
+// pageStub serves 100-run pages whose submitted_at string is not what
+// time.Time would re-format to, so only the raw value passes the assertion.
+// After `pages` full pages it serves an empty one.
+func pageStub(t *testing.T, pages int) (*dstack.HTTPClient, *[]string) {
+	t.Helper()
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		page := len(bodies) - 1
+		runs := make([]string, 0, 100)
+		for i := 0; i < 100 && page < pages; i++ {
+			runs = append(runs, fmt.Sprintf(
+				`{"id":"id-%d-%d","status":"running","submitted_at":"2026-01-02T03:04:05.1234567+00:00","run_spec":{"run_name":"r%d-%d","configuration":{}}}`,
+				page, i, page, i))
+		}
+		_, _ = w.Write([]byte("[" + strings.Join(runs, ",") + "]"))
+	}))
+	t.Cleanup(srv.Close)
+	return dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client()), &bodies
+}
+
+func TestClient_ListRuns_SendsCursorFromLastRunOfPage(t *testing.T) {
+	c, bodies := pageStub(t, 1)
+	runs, err := c.ListRuns(context.Background())
+	if err != nil || len(runs) != 100 {
+		t.Fatalf("ListRuns: %d runs, err %v", len(runs), err)
+	}
+	if len(*bodies) != 2 {
+		t.Fatalf("got %d requests, want 2", len(*bodies))
+	}
+	if strings.Contains((*bodies)[0], "prev_") {
+		t.Fatalf("first request carries a cursor: %s", (*bodies)[0])
+	}
+	for _, want := range []string{
+		`"only_active":true`, `"limit":100`,
+		`"prev_submitted_at":"2026-01-02T03:04:05.1234567+00:00"`,
+		`"prev_run_id":"id-0-99"`,
+	} {
+		if !strings.Contains((*bodies)[1], want) {
+			t.Fatalf("second request lacks %s: %s", want, (*bodies)[1])
+		}
+	}
+}
+
+// A server that ignores the cursor returns the same full page forever.
+func TestClient_ListRuns_CursorThatDoesNotAdvanceIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("[" + strings.Join(stubRuns(100), ",") + "]"))
+	}))
+	t.Cleanup(srv.Close)
+	c := dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client())
+	done := make(chan error, 1)
+	go func() { _, err := c.ListRuns(context.Background()); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "did not advance") {
+			t.Fatalf("got %v, want a did-not-advance error", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ListRuns did not return against a server that ignores the cursor")
+	}
+}
+
+// A server whose pages never end is cut off by the page cap.
+func TestClient_ListRuns_PageCapIsAnError(t *testing.T) {
+	c, bodies := pageStub(t, 1000)
+	if _, err := c.ListRuns(context.Background()); err == nil || !strings.Contains(err.Error(), "pages") {
+		t.Fatalf("got %v, want a page-cap error", err)
+	}
+	if len(*bodies) != 50 {
+		t.Fatalf("made %d requests, want 50", len(*bodies))
+	}
+}
+
+func TestClient_ListRuns_JustUnderAFullPageIsFine(t *testing.T) {
+	c, _ := listStub(t, stubRuns(99))
+	runs, err := c.ListRuns(context.Background())
+	if err != nil || len(runs) != 99 {
+		t.Fatalf("ListRuns with 99 runs: got %d runs, err %v", len(runs), err)
+	}
+}
+
+// A colleague's run with max_duration "off" must not fail the sweep.
+func TestClient_ListRuns_ForeignOffMaxDurationDoesNotPoisonList(t *testing.T) {
+	foreign := `{"id":"f","status":"running","run_spec":{"run_name":"theirs","configuration":{"max_duration":"off"}}}`
+	c, _ := listStub(t, []string{stubRuns(1)[0], foreign})
+	runs, err := c.ListRuns(context.Background())
+	if err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	if len(runs) != 2 || runs[1].Name != "theirs" || runs[1].MaxDuration != 0 {
+		t.Fatalf("ListRuns: got %+v", runs)
 	}
 }
 
@@ -972,5 +1178,36 @@ func TestHTTPClient_EnsureFleet_GetErrorPropagates(t *testing.T) {
 		Backends: []string{"vastai"},
 	}); err == nil {
 		t.Fatal("EnsureFleet: got nil error, want the fleets/get failure propagated")
+	}
+}
+
+// The env a run is applied with reaches the fake over the wire, comes back on
+// get and list, and is part of the active-run override comparison: the reaper's
+// ownership stamp rides on it.
+func TestClient_EnvRoundTripsAndIsPartOfTheOverrideCheck(t *testing.T) {
+	fake := mock.New()
+	srv := httptest.NewServer(mock.NewHTTPServer(fake, mock.ValidToken))
+	t.Cleanup(srv.Close)
+	c := dstack.NewHTTPClient(srv.URL, "main", mock.ValidToken, nil)
+	ctx := context.Background()
+
+	env := map[string]string{"SQUALL_MODEL_UID": "uid-1"}
+	run, err := c.Apply(ctx, dstack.ApplyRequest{Name: "qwen", Replicas: 1, Env: env})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	got, err := c.Get(ctx, "qwen")
+	if err != nil || got.Env["SQUALL_MODEL_UID"] != "uid-1" {
+		t.Fatalf("Get env = %v, err %v, want the stamp echoed", got.Env, err)
+	}
+	listed, err := c.ListRuns(ctx)
+	if err != nil || len(listed) != 1 || listed[0].Env["SQUALL_MODEL_UID"] != "uid-1" {
+		t.Fatalf("ListRuns = %+v, err %v, want the stamp echoed", listed, err)
+	}
+	if _, err := c.Apply(ctx, dstack.ApplyRequest{Name: "qwen", Replicas: 0, Current: run}); !errors.Is(err, dstack.ErrCannotOverride) {
+		t.Fatalf("flip that drops the env: got %v, want ErrCannotOverride", err)
+	}
+	if _, err := c.Apply(ctx, dstack.ApplyRequest{Name: "qwen", Replicas: 0, Current: run, Env: env}); err != nil {
+		t.Fatalf("flip that re-sends the env: %v", err)
 	}
 }

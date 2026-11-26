@@ -15,6 +15,7 @@ import (
 
 	squallv1alpha1 "github.com/ackstorm/squall/api/squall/v1alpha1"
 	"github.com/ackstorm/squall/internal/dstack"
+	"github.com/ackstorm/squall/internal/metrics"
 )
 
 // DefaultReapInterval is how often the reaper re-answers "is anything
@@ -71,6 +72,8 @@ type Reaper struct {
 	Grace        time.Duration
 	Timeout      time.Duration
 	Clock        func() time.Time
+	// Metrics is optional: nil exports nothing.
+	Metrics *metrics.ReaperCollector
 }
 
 // NeedLeaderElection keeps exactly one replica reaping. Two reapers racing
@@ -161,7 +164,7 @@ func (r *Reaper) Sweep(ctx context.Context) (int, error) {
 	}
 
 	now := r.now()
-	reaped := 0
+	reaped, refused := 0, 0
 	var errs []error
 	for i := range runs {
 		run := &runs[i]
@@ -169,8 +172,7 @@ func (r *Reaper) Sweep(ctx context.Context) (int, error) {
 			continue
 		}
 		if run.IsTerminal() {
-			// Already dead. Nothing is billing, and dstack keeps terminal
-			// runs listed by design (D52) — deleting them is tidiness, not
+			// Already dead: nothing is billing. Deleting it is tidiness, not
 			// safety, so it is not worth an API call or a failure mode.
 			continue
 		}
@@ -194,12 +196,14 @@ func (r *Reaper) Sweep(ctx context.Context) (int, error) {
 		// case touching it is the intolerable one.
 		markedUID := run.Env[ModelUIDEnvKey]
 		if markedUID == "" {
+			refused++
 			logger.Info("REFUSING to reap an unmarked run: no Model claims its name, but without a "+
 				ModelUIDEnvKey+" stamp squall cannot prove it minted this run",
 				"run", run.Name, "runID", run.RunID, "age", now.Sub(run.SubmittedAt))
 			continue
 		}
 		if nn, alive := liveUIDs[markedUID]; alive {
+			refused++
 			logger.Info("leaving a run stamped by a live Model despite a name mismatch; "+
 				"reporting, not reaping — see D108/D109",
 				"run", run.Name, "model", nn.String())
@@ -215,8 +219,14 @@ func (r *Reaper) Sweep(ctx context.Context) (int, error) {
 		reaped++
 	}
 
+	if r.Metrics != nil {
+		r.Metrics.SetRefused(refused)
+	}
 	if len(errs) > 0 {
 		return reaped, errors.Join(errs...)
+	}
+	if r.Metrics != nil {
+		r.Metrics.SweepSucceeded(now)
 	}
 	return reaped, nil
 }
