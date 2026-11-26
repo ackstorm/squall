@@ -3,7 +3,7 @@
 **Scale-to-zero LLM serving on GPUs that are not in your cluster.**
 
 ![status](https://img.shields.io/badge/status-pre--alpha-orange)
-![release](https://img.shields.io/badge/release-v0.1.13-green)
+![release](https://img.shields.io/badge/release-v0.1.14-green)
 ![go](https://img.shields.io/badge/go-1.27.3-00ADD8)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 
@@ -125,7 +125,7 @@ See [Send it a request](#send-it-a-request) for why that decides your `holdTimeo
 The chart deploys squall **and a dstack server** — you do not need to run dstack yourself.
 
 ```bash
-helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.13 \
+helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.14 \
   --namespace squall-system --create-namespace \
   --set-string dstack.adminToken.value="$(openssl rand -hex 16)" \
   --set controller.env.dstackURL="http://dstack.squall-system.svc.cluster.local:3000"
@@ -138,7 +138,7 @@ until you do this, and `kubectl apply` of a Model using one fails with `unknown 
 
 ```bash
 kubectl apply --server-side -f \
-  https://github.com/ackstorm/squall/releases/download/v0.1.13/squall.ackstorm.ai_models.yaml
+  https://github.com/ackstorm/squall/releases/download/v0.1.14/squall.ackstorm.ai_models.yaml
 ```
 
 With no `dstack.backends`, dstack provisions onto your own cluster — no GPU, no bill, useful
@@ -195,6 +195,15 @@ wake is a full cold provision. `holdTimeout` must cover one regardless of which 
 
 **Only `vastai` and `kubernetes` have been run end to end.** The rest are untested rather
 than unsupported — worth knowing which of the two you are dealing with when something fails.
+
+**Orphaned machines.** The chart runs dstack with `DSTACK_SERVER_ORPHAN_CLEANUP_MODE=delete`:
+every hour dstack lists the provider's machines carrying its own mark and destroys those it
+no longer tracks. Machines without its mark, such as other dstack servers' or your own GPUs
+on the same account, are never touched. In dstack 0.22.6 this covers `aws`, `gcp`, `azure`,
+`runpod` and `nebius`; **`vastai` and `digitalocean` are not covered**, so a machine dstack
+loses there keeps billing until someone stops it
+([dstackai/dstack#4546](https://github.com/dstackai/dstack/issues/4546)). Before relying on a
+new backend, check that dstack's orphan cleanup supports it.
 
 > **Helm never upgrades CRDs.** Files under a chart's `crds/` directory are applied on
 > install and ignored on every upgrade. After a version bump, apply the CRD yourself — it

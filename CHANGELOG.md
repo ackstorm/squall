@@ -11,6 +11,16 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+## [0.1.14] — 2026-11-26
+
+### Changed
+
+- **The bundled dstack server destroys its own orphaned machines** (`DSTACK_SERVER_ORPHAN_CLEANUP_MODE=delete`;
+  dstack's default only reports them). It acts only on machines carrying dstack's own mark and no
+  longer tracked; anything else on the account is left alone. Covered in dstack 0.22.6: AWS, GCP,
+  Azure, RunPod, Nebius. **Not covered: Vast.ai and DigitalOcean**
+  ([dstackai/dstack#4546](https://github.com/dstackai/dstack/issues/4546)).
+
 ## [0.1.13] — 2026-11-26
 
 ### Fixed
@@ -461,7 +471,8 @@ order to run this safely are listed.
   so a Model verified before upgrading keeps it empty until its run generation
   is replaced. Empty means "do not rewrite", which is the safe direction.
 
-[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.13...HEAD
+[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.14...HEAD
+[0.1.14]: https://github.com/ackstorm/squall/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/ackstorm/squall/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/ackstorm/squall/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/ackstorm/squall/compare/v0.1.10...v0.1.11
