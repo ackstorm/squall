@@ -344,7 +344,7 @@ func TestListRuns_ReturnsAllLiveRuns(t *testing.T) {
 	s.MustApply(t, ApplyRequest{Name: "qwen", Replicas: 1})
 	s.MustApply(t, ApplyRequest{Name: "llama", Replicas: 0})
 
-	runs := s.ListRuns()
+	runs := s.ListRuns(false, 100)
 	if len(runs) != 2 {
 		t.Fatalf("ListRuns: got %d runs, want 2: %+v", len(runs), runs)
 	}
@@ -367,12 +367,30 @@ func TestListRuns_IncludesTerminalRunsWithStatus(t *testing.T) {
 	s.MustApply(t, ApplyRequest{Name: "qwen", Replicas: 1})
 	s.Terminate("qwen")
 
-	runs := s.ListRuns()
+	runs := s.ListRuns(false, 100)
 	if len(runs) != 1 {
 		t.Fatalf("ListRuns must still report a terminal run, got %+v", runs)
 	}
 	if runs[0].Status != statusTerminated {
 		t.Fatalf("ListRuns: Status = %q, want %q", runs[0].Status, statusTerminated)
+	}
+}
+
+func TestListRuns_OnlyActiveDropsTerminalAndLimitCaps(t *testing.T) {
+	s := New()
+	s.MustApply(t, ApplyRequest{Name: "a", Replicas: 1})
+	s.MustApply(t, ApplyRequest{Name: "b", Replicas: 1})
+	s.MustApply(t, ApplyRequest{Name: "dead", Replicas: 1})
+	s.Terminate("dead")
+
+	if runs := s.ListRuns(true, 100); len(runs) != 2 {
+		t.Fatalf("onlyActive: got %+v, want the two live runs", runs)
+	}
+	if runs := s.ListRuns(false, 100); len(runs) != 3 {
+		t.Fatalf("all: got %d runs, want 3", len(runs))
+	}
+	if runs := s.ListRuns(false, 1); len(runs) != 1 {
+		t.Fatalf("limit 1: got %d runs", len(runs))
 	}
 }
 

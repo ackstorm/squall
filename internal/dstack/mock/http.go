@@ -367,8 +367,22 @@ func (s *Server) handleStopRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, struct{}{})
 }
 
+type listRunsRequestWire struct {
+	OnlyActive bool `json:"only_active"`
+	Limit      int  `json:"limit"`
+}
+
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
-	runs := s.ListRuns()
+	in := listRunsRequestWire{Limit: 100}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error(), "error")
+		return
+	}
+	if in.Limit < 0 || in.Limit > 100 {
+		writeError(w, http.StatusUnprocessableEntity, "limit must be between 0 and 100", "error")
+		return
+	}
+	runs := s.ListRuns(in.OnlyActive, in.Limit)
 	wires := make([]runOutWire, len(runs))
 	for i, run := range runs {
 		wires[i] = runToWire(&run)

@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -578,11 +580,10 @@ func TestClient_Delete_AlreadyAbsent_MapsToErrNotFound(t *testing.T) {
 	}
 }
 
-// TestClient_ListRuns_ReturnsAllKnownRuns backs the reconcile loop's orphan
-// diff (§5.2). Unlike this client's earlier, invented assumption, a
-// terminal run is NOT excluded — dstack keeps its record; Status is how a
-// caller tells it apart from a live one (F20, measured §9.4).
-func TestClient_ListRuns_ReturnsAllKnownRuns(t *testing.T) {
+// TestClient_ListRuns_ExcludesTerminalRuns backs the reconcile loop's orphan
+// diff (§5.2). ListRuns asks for active runs only, so a terminal run, which
+// dstack keeps listed otherwise, never reaches the caller.
+func TestClient_ListRuns_ExcludesTerminalRuns(t *testing.T) {
 	fake := mock.New()
 	srv := httptest.NewServer(mock.NewHTTPServer(fake, mock.ValidToken))
 	t.Cleanup(srv.Close)
@@ -604,15 +605,77 @@ func TestClient_ListRuns_ReturnsAllKnownRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRuns: %v", err)
 	}
-	if len(runs) != 3 {
-		t.Fatalf("ListRuns: got %d runs, want 3 (dstack keeps terminal runs too): %+v", len(runs), runs)
+	if len(runs) != 2 {
+		t.Fatalf("ListRuns: got %d runs, want 2 (terminal runs are not requested): %+v", len(runs), runs)
 	}
-	byName := map[string]dstack.Run{}
 	for _, r := range runs {
-		byName[r.Name] = r
+		if r.Name == "dead" {
+			t.Fatalf("ListRuns returned the terminal run: %+v", r)
+		}
 	}
-	if !byName["dead"].IsTerminal() {
-		t.Fatalf("ListRuns: %+v, want the terminal run reported with a terminal Status, not excluded", byName["dead"])
+}
+
+// listStub answers /api/runs/list with the given run bodies and records the
+// request body it received.
+func listStub(t *testing.T, runs []string) (*dstack.HTTPClient, *[]byte) {
+	t.Helper()
+	var got []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte("[" + strings.Join(runs, ",") + "]"))
+	}))
+	t.Cleanup(srv.Close)
+	return dstack.NewHTTPClient(srv.URL, "main", "tok", srv.Client()), &got
+}
+
+func stubRuns(n int) []string {
+	runs := make([]string, n)
+	for i := range runs {
+		runs[i] = fmt.Sprintf(`{"id":"id%d","status":"running","run_spec":{"run_name":"r%d","configuration":{}}}`, i, i)
+	}
+	return runs
+}
+
+// The marshalled body is asserted, not a decoded struct: a decoded struct
+// passes even when a key is absent (D166).
+func TestClient_ListRuns_SendsOnlyActiveAndLimit(t *testing.T) {
+	c, body := listStub(t, stubRuns(1))
+	if _, err := c.ListRuns(context.Background()); err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	for _, want := range []string{`"only_active":true`, `"limit":100`} {
+		if !bytes.Contains(*body, []byte(want)) {
+			t.Fatalf("list request body lacks %s: %s", want, *body)
+		}
+	}
+}
+
+func TestClient_ListRuns_FullPageIsAnError(t *testing.T) {
+	c, _ := listStub(t, stubRuns(100))
+	_, err := c.ListRuns(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "truncated") {
+		t.Fatalf("ListRuns with a full page: got %v, want a truncation error", err)
+	}
+}
+
+func TestClient_ListRuns_JustUnderAFullPageIsFine(t *testing.T) {
+	c, _ := listStub(t, stubRuns(99))
+	runs, err := c.ListRuns(context.Background())
+	if err != nil || len(runs) != 99 {
+		t.Fatalf("ListRuns with 99 runs: got %d runs, err %v", len(runs), err)
+	}
+}
+
+// A colleague's run with max_duration "off" must not fail the sweep.
+func TestClient_ListRuns_ForeignOffMaxDurationDoesNotPoisonList(t *testing.T) {
+	foreign := `{"id":"f","status":"running","run_spec":{"run_name":"theirs","configuration":{"max_duration":"off"}}}`
+	c, _ := listStub(t, []string{stubRuns(1)[0], foreign})
+	runs, err := c.ListRuns(context.Background())
+	if err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	if len(runs) != 2 || runs[1].Name != "theirs" || runs[1].MaxDuration != 0 {
+		t.Fatalf("ListRuns: got %+v", runs)
 	}
 }
 

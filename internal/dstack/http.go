@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 // post issues one POST and classifies the outcome. It is the ONLY place
@@ -115,17 +116,25 @@ func (c *HTTPClient) Delete(ctx context.Context, name string) error {
 	return err
 }
 
-// ListRuns backs the reconcile loop's orphan diff (§5.2).
+// listRunsLimit is the server's maximum page size.
+const listRunsLimit = 100
+
+// ListRuns backs the reconcile loop's orphan diff (§5.2). It lists active
+// runs only; a finished run cannot bill.
 func (c *HTTPClient) ListRuns(ctx context.Context) ([]Run, error) {
 	// MEASURED: /api/project/{p}/runs/list answers 405. `list` lives on the
 	// ROOT router (`/api/runs/list`), unlike every other run operation.
-	body, err := c.post(ctx, "/api/runs/list", struct{}{})
+	body, err := c.post(ctx, "/api/runs/list", listRunsRequest{OnlyActive: true, Limit: listRunsLimit})
 	if err != nil {
 		return nil, err
 	}
 	var wires []json.RawMessage
 	if err := json.Unmarshal(body, &wires); err != nil {
 		return nil, fmt.Errorf("dstack: decode run list: %w", err)
+	}
+	// ponytail: one page; a full page is an error. Page with prev_submitted_at/prev_run_id if a server ever holds 100 active runs.
+	if len(wires) >= listRunsLimit {
+		return nil, fmt.Errorf("dstack: run list returned a full page (%d runs) and may be truncated", len(wires))
 	}
 	runs := make([]Run, 0, len(wires))
 	for _, w := range wires {
@@ -351,7 +360,7 @@ func decodeRun(body []byte) (*Run, error) {
 		Env:                 w.RunSpec.Configuration.Env,
 		SSHKeyPub:           w.RunSpec.SSHKeyPub,
 		IdleDuration:        wireSecondsPtr(w.RunSpec.Configuration.IdleDuration),
-		MaxDuration:         wireSeconds(w.RunSpec.Configuration.MaxDuration),
+		MaxDuration:         time.Duration(w.RunSpec.Configuration.MaxDuration),
 		Status:              w.Status,
 		SubmittedAt:         w.SubmittedAt,
 		ProvisioningFailure: decodeProvisioningFailure(w),

@@ -422,6 +422,34 @@ func TestHTTP_ListRuns_ReturnsAllKnownRuns(t *testing.T) {
 	}
 }
 
+func TestHTTP_ListRuns_HonoursOnlyActiveAndLimit(t *testing.T) {
+	s := New()
+	srv := httptest.NewServer(NewHTTPServer(s, ValidToken))
+	t.Cleanup(srv.Close)
+	s.MustApply(t, ApplyRequest{Name: "a", Replicas: 1})
+	s.MustApply(t, ApplyRequest{Name: "b", Replicas: 1})
+	s.MustApply(t, ApplyRequest{Name: "dead", Replicas: 1})
+	s.Terminate("dead")
+
+	for _, tc := range []struct {
+		body string
+		want int
+	}{
+		{`{"only_active":true,"limit":100}`, 2},
+		{`{"only_active":false,"limit":100}`, 3},
+		{`{"limit":1}`, 1},
+	} {
+		resp, body := postJSON(t, srv, ValidToken, "/api/runs/list", tc.body)
+		var wires []json.RawMessage
+		if resp.StatusCode != http.StatusOK || json.Unmarshal(body, &wires) != nil || len(wires) != tc.want {
+			t.Fatalf("list %s: status %d, got %s, want %d runs", tc.body, resp.StatusCode, body, tc.want)
+		}
+	}
+	if resp, _ := postJSON(t, srv, ValidToken, "/api/runs/list", `{"limit":101}`); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("limit 101: got %d, want 422", resp.StatusCode)
+	}
+}
+
 // TestHTTP_ListRuns_BadToken_Is403 covers the list route's auth check.
 func TestHTTP_ListRuns_BadToken_Is403(t *testing.T) {
 	s := New()

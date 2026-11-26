@@ -365,7 +365,8 @@ type Client interface {
 	// idle_duration (F21, always sent as 0 — there is no spec.fleet on the
 	// Model any more); Delete does not and must not model that release.
 	Delete(ctx context.Context, name string) error
-	// ListRuns backs the reconcile loop's orphan diff (§5.2).
+	// ListRuns returns the active runs the token can see, for the orphan
+	// diff (§5.2). It is one page: a full page is an error, not a truncation.
 	ListRuns(ctx context.Context) ([]Run, error)
 
 	// BackendConfigured reports whether backend is configured on the dstack

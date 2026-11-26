@@ -24,6 +24,13 @@ All run operations are `POST`, all under a per-project prefix
 There is no GET anywhere and no `/runs/{name}` path parameter. The run name travels in the
 body (`GetRunRequest{run_name, id}`).
 
+`list` is paged and unfiltered by default (`server/schemas/runs.py`, `ListRunsRequest`, same
+at 0.21.2 and 0.22.6): `only_active: false`, `limit: 100` (max 100), `ascending: false`, with
+`prev_submitted_at` / `prev_run_id` as the cursor. `only_active` filters out
+`RunStatus.finished_statuses()`. Terminal runs stay listed, so an empty body returns the
+newest 100 runs of any status across every project the token can see.
+`run_spec.configuration.max_duration` is an integer, the string `"off"`, or null.
+
 ## 2. Apply is two-step, and the CAS is an object, not an integer
 
 `server/schemas/runs.py`:

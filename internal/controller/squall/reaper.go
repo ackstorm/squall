@@ -169,8 +169,7 @@ func (r *Reaper) Sweep(ctx context.Context) (int, error) {
 			continue
 		}
 		if run.IsTerminal() {
-			// Already dead. Nothing is billing, and dstack keeps terminal
-			// runs listed by design (D52) — deleting them is tidiness, not
+			// Already dead: nothing is billing. Deleting it is tidiness, not
 			// safety, so it is not worth an API call or a failure mode.
 			continue
 		}

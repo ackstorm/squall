@@ -445,17 +445,22 @@ func (s *Server) Get(name string) (*Run, error) {
 	return s.runFor(name, svc), nil
 }
 
-// ListRuns returns every service the fake has ever applied, live or
-// terminal — what backs the reconcile loop's orphan diff (§5.2). Measured
-// (§9.4): dstack keeps a terminal run's record; Status, not presence, is
-// what tells a caller it is dead. Delete is the only surface that removes a
-// run from this list.
-func (s *Server) ListRuns() []Run {
+// ListRuns returns what dstack's list route returns for the same request:
+// every service the fake has applied, live or terminal (dstack keeps a
+// terminal run's record, measured §9.4), unless onlyActive drops the
+// terminal ones, capped at limit.
+func (s *Server) ListRuns(onlyActive bool, limit int) []Run {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	runs := make([]Run, 0, len(s.services))
 	for name, svc := range s.services {
+		if onlyActive && svc.terminal {
+			continue
+		}
+		if len(runs) == limit {
+			break
+		}
 		runs = append(runs, *s.runFor(name, svc))
 	}
 	return runs
