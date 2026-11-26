@@ -220,6 +220,12 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		model.Status.DeploymentNum = int64(observed.Run.DeploymentNum)
 		model.Status.ServiceURL = observed.Run.ServiceURL
 		model.Status.Replica = replicaStatus(observed.Run.Replica)
+		// A live run always has a deadline and a sleep anchor. The anchor is
+		// journaled after a wake Apply, so a crash or a failed status patch
+		// in between leaves a billing run with none: seed it from this pass.
+		if observed.Run.Replicas > 0 && model.Status.WakeStartedAt == nil {
+			model.Status.WakeStartedAt = &metav1.Time{Time: now}
+		}
 	}
 	demand := hasDemand(&model, now)
 	metricUncontrolledSince := updateActivityStatus(&model, observed, demand, now)

@@ -52,6 +52,13 @@ func unhealthyFixture(t *testing.T, name string, failures int, unhealthyAfter ti
 	t.Cleanup(func() {
 		_ = k8sClient.Delete(context.Background(), model)
 	})
+	// The wake was journaled long ago, so the failure window is measured
+	// from the last success rather than from this pass.
+	woke := metav1.NewTime(time.Now().Add(-time.Hour))
+	model.Status.WakeStartedAt = &woke
+	if err := k8sClient.Status().Update(ctx, model); err != nil {
+		t.Fatalf("journal wakeStartedAt: %v", err)
+	}
 
 	if _, err := dstackClient.Apply(ctx, dstack.ApplyRequest{Name: runNameIn(manualNamespace, name), Replicas: 1}); err != nil {
 		t.Fatalf("seed dstack run: %v", err)
