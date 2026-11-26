@@ -12,7 +12,10 @@
 # the builder stage.
 ARG GO_VERSION=1.27
 
-FROM golang:${GO_VERSION}-bookworm AS builder
+# The builder runs on the build host's platform and cross-compiles for
+# TARGETARCH, so a multi-arch build needs no QEMU.
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS builder
+ARG TARGETOS TARGETARCH
 ARG CMD=controller
 ARG VERSION=dev
 WORKDIR /src
@@ -26,7 +29,7 @@ COPY internal/ internal/
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags="-s -w -X main.Version=${VERSION}" \
     -o /out/app "./cmd/${CMD}"
 

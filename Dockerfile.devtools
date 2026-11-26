@@ -32,6 +32,7 @@ ARG KIND_VERSION=v0.25.0
 ARG HELM_VERSION=v3.16.3
 ARG GOVULNCHECK_VERSION=v1.3.0
 ARG GOLANGCI_LINT_VERSION=v2.15.0
+ARG BUILDX_VERSION=v0.39.1
 
 # Build-scoped only (ARG, not ENV): this image is meant to be `bash`ed into, and
 # a baked-in DEBIAN_FRONTEND=noninteractive would silently skip prompts for
@@ -82,6 +83,15 @@ RUN ARCH="$(dpkg --print-architecture)" \
          -o /usr/local/bin/kubectl \
     && chmod +x /usr/local/bin/kubectl \
     && kubectl version --client
+
+# buildx — Debian's docker.io ships without it; `make release-images` needs it
+# for the multi-arch build.
+RUN ARCH="$(dpkg --print-architecture)" \
+    && mkdir -p /usr/local/lib/docker/cli-plugins \
+    && curl -fsSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-${ARCH}" \
+         -o /usr/local/lib/docker/cli-plugins/docker-buildx \
+    && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx \
+    && docker buildx version
 
 # controller-gen, kustomize, setup-envtest and golangci-lint via go install ->
 # /usr/local/bin (GOBIN)

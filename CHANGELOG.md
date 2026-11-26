@@ -11,6 +11,13 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+## [0.1.12] — 2026-11-26
+
+### Added
+
+- **The controller and proxy images are published for linux/amd64 and linux/arm64.**
+  Squall now runs on arm64 nodes (e.g. AWS Graviton). No code or behaviour change.
+
 ## [0.1.11] — 2026-11-02
 
 ### Changed
@@ -411,7 +418,8 @@ order to run this safely are listed.
   so a Model verified before upgrading keeps it empty until its run generation
   is replaced. Empty means "do not rewrite", which is the safe direction.
 
-[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.11...HEAD
+[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.12...HEAD
+[0.1.12]: https://github.com/ackstorm/squall/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/ackstorm/squall/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/ackstorm/squall/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/ackstorm/squall/compare/v0.1.8...v0.1.9

@@ -6,7 +6,7 @@ IMG ?= squall:latest
 # Chart.yaml's version/appVersion: a binary reporting "dev" in a tagged
 # release is indistinguishable from a developer's local build, which is
 # exactly the ambiguity you do not want when reading a bug report.
-VERSION ?= 0.1.11
+VERSION ?= 0.1.12
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set).
 # Guarded with `command -v go` so host-only targets (clean, doctor, cluster-up, ...)
@@ -329,6 +329,10 @@ CONTROLLER_IMAGE ?= $(REGISTRY)/$(IMAGE_NAMESPACE)/squall-controller
 PROXY_IMAGE      ?= $(REGISTRY)/$(IMAGE_NAMESPACE)/squall-proxy
 CHART_REPO       ?= oci://$(REGISTRY)/$(IMAGE_NAMESPACE)/charts
 DIST             ?= dist
+PLATFORMS        ?= linux/amd64,linux/arm64
+# The default `docker` buildx driver cannot build a multi-platform image unless
+# the daemon uses the containerd image store; a docker-container builder can.
+BUILDX_BUILDER   ?= squall-release
 
 # `docker login` and `helm registry login` write into $HOME, and scripts/dev.sh
 # gives the container a HOME of its own (/workspace/.gocache). A login done on
@@ -365,14 +369,14 @@ release-images: ## Build and push the squall-controller and squall-proxy images 
 	$(call container_target,_release-images)
 _release-images: release-check
 	$(call registry_login,$(CONTAINER_TOOL) login)
-	$(CONTAINER_TOOL) build -t $(CONTROLLER_IMAGE):$(VERSION) -t $(CONTROLLER_IMAGE):latest \
+	$(CONTAINER_TOOL) buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 \
+	  || $(CONTAINER_TOOL) buildx create --name $(BUILDX_BUILDER) --driver docker-container
+	$(CONTAINER_TOOL) buildx build --builder $(BUILDX_BUILDER) --platform $(PLATFORMS) --push \
+	  -t $(CONTROLLER_IMAGE):$(VERSION) -t $(CONTROLLER_IMAGE):latest \
 	  --build-arg CMD=controller --build-arg VERSION=$(VERSION) .
-	$(CONTAINER_TOOL) build -t $(PROXY_IMAGE):$(VERSION) -t $(PROXY_IMAGE):latest \
+	$(CONTAINER_TOOL) buildx build --builder $(BUILDX_BUILDER) --platform $(PLATFORMS) --push \
+	  -t $(PROXY_IMAGE):$(VERSION) -t $(PROXY_IMAGE):latest \
 	  --build-arg CMD=proxy --build-arg VERSION=$(VERSION) .
-	$(CONTAINER_TOOL) push $(CONTROLLER_IMAGE):$(VERSION)
-	$(CONTAINER_TOOL) push $(CONTROLLER_IMAGE):latest
-	$(CONTAINER_TOOL) push $(PROXY_IMAGE):$(VERSION)
-	$(CONTAINER_TOOL) push $(PROXY_IMAGE):latest
 
 .PHONY: release-chart
 release-chart: ## Package the Helm chart into dist/ and push it to the release registry as an OCI artifact.
