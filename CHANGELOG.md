@@ -11,6 +11,8 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+## [0.1.13] — 2026-11-26
+
 ### Fixed
 
 - **squall-proxy drains on SIGTERM.** It exited as soon as shutdown began, so every
@@ -459,7 +461,8 @@ order to run this safely are listed.
   so a Model verified before upgrading keeps it empty until its run generation
   is replaced. Empty means "do not rewrite", which is the safe direction.
 
-[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.12...HEAD
+[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.13...HEAD
+[0.1.13]: https://github.com/ackstorm/squall/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/ackstorm/squall/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/ackstorm/squall/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/ackstorm/squall/compare/v0.1.9...v0.1.10
