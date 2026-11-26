@@ -106,6 +106,7 @@ jobs:
       contents: read
       security-events: write
       actions: read
+      packages: read   # pull the pre-built devtools image from GHCR
     steps:
       # fetch-depth: 0 (full history) — this job's checkout is what
       # gitleaks/trufflehog scan (see scripts/security-scan.sh); the default
