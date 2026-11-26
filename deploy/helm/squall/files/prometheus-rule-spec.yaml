@@ -52,7 +52,7 @@
               flip it to zero at squall_model_uncontrolled_timeout_seconds; this
               fires early so the proxy outage is visible before that happens.
         - alert: SquallModelCapacityWhileNotReady
-          expr: squall_model_run_active > max by (namespace, name) (squall_model_phase{phase="Ready"})
+          expr: squall_model_run_active == 1 unless ignoring(phase) squall_model_phase{phase="Ready"}
           for: 15m
           labels:
             severity: critical

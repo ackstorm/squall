@@ -189,17 +189,6 @@ spec:
         - name: DSTACK_ENABLE_PROMETHEUS_METRICS
           value: "1"
         {{- end }}
-        {{- if .Values.dstack.database.existingSecret.name }}
-        # DSTACK_DATABASE_URL is the ONLY switch dstack reads for its DB
-        # backend (server/settings.py's get_database_url()) — sourced from a
-        # Secret that already exists in this namespace, never a values.yaml
-        # literal. See values.yaml's dstack.database comment for why SQLite
-        # (the fallback when this is unset) is development-only.
-        - name: DSTACK_DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: {{ .Values.dstack.database.existingSecret.name }}
-              key: {{ .Values.dstack.database.existingSecret.key }}
         # How long dstack's service proxy waits for a replica's response
         # HEADERS. Its default is 60s, copied from nginx, and for a
         # NON-streaming completion vLLM sends no headers until generation
@@ -218,6 +207,17 @@ spec:
         # SSH tunnel, which takes dstack's proxy out of the data path.
         - name: DSTACK_SERVICE_CLIENT_TIMEOUT
           value: {{ .Values.dstack.serviceClientTimeoutSeconds | quote }}
+        {{- if .Values.dstack.database.existingSecret.name }}
+        # DSTACK_DATABASE_URL is the ONLY switch dstack reads for its DB
+        # backend (server/settings.py's get_database_url()) — sourced from a
+        # Secret that already exists in this namespace, never a values.yaml
+        # literal. See values.yaml's dstack.database comment for why SQLite
+        # (the fallback when this is unset) is development-only.
+        - name: DSTACK_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.dstack.database.existingSecret.name }}
+              key: {{ .Values.dstack.database.existingSecret.key }}
         - name: DSTACK_DB_POOL_SIZE
           value: {{ .Values.dstack.database.poolSize | quote }}
         - name: DSTACK_DB_MAX_OVERFLOW
