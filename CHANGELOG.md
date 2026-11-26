@@ -11,6 +11,17 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+### Changed
+
+- **dstack server 0.22.6 -> 0.22.9.** Orphan cleanup now also covers the `kubernetes` backend.
+  Vast.ai and DigitalOcean are still not covered.
+
+### Fixed
+
+- **The chart's RBAC for dstack's Kubernetes backend matches what dstack 0.22.7+ needs:** `get` and
+  `create` on `apps/replicasets`, which dstack uses for its SSH jump pod, and `list` on pods,
+  services and secrets for its orphan cleanup.
+
 ## [0.1.14] — 2026-11-26
 
 ### Changed

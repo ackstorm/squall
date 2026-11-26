@@ -70,20 +70,39 @@ rules:
   - pods
   verbs:
   - get
+  - list
+  - watch
+  - create
+  - delete
+# list on services and secrets: dstack's orphan cleanup on this backend.
+- apiGroups:
+  - ""
+  resources:
+  - services
+  - secrets
+  verbs:
+  - get
+  - list
   - watch
   - create
   - delete
 - apiGroups:
   - ""
   resources:
-  - services
-  - secrets
   - persistentvolumeclaims
   verbs:
   - get
   - watch
   - create
   - delete
+# dstack runs its SSH jump pod as a ReplicaSet.
+- apiGroups:
+  - apps
+  resources:
+  - replicasets
+  verbs:
+  - get
+  - create
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

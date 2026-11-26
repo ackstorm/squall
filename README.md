@@ -184,7 +184,7 @@ verbatim and `spec.placement.backends` is an unconstrained list of names, so **a
 dstack supports is usable from a `Model`**. Bringing up a new provider is a credentials and
 measurement exercise, not a change to squall.
 
-dstack 0.22.6 ships `aws`, `azure`, `gcp`, `oci`, `nebius`, `lambda`, `vastai`, `runpod`,
+dstack 0.22.9 ships `aws`, `azure`, `gcp`, `oci`, `nebius`, `lambda`, `vastai`, `runpod`,
 `digitalocean`, `amddevcloud`, `vultr`, `cloudrift`, `crusoe`, `datacrunch`, `hotaisle`,
 `jarvislabs`, `seeweb`, `verda`, `slurm`, `kubernetes` and dstack Sky.
 
@@ -199,8 +199,8 @@ than unsupported — worth knowing which of the two you are dealing with when so
 **Orphaned machines.** The chart runs dstack with `DSTACK_SERVER_ORPHAN_CLEANUP_MODE=delete`:
 every hour dstack lists the provider's machines carrying its own mark and destroys those it
 no longer tracks. Machines without its mark, such as other dstack servers' or your own GPUs
-on the same account, are never touched. In dstack 0.22.6 this covers `aws`, `gcp`, `azure`,
-`runpod` and `nebius`; **`vastai` and `digitalocean` are not covered**, so a machine dstack
+on the same account, are never touched. In dstack 0.22.9 this covers `aws`, `gcp`, `azure`,
+`runpod`, `nebius` and `kubernetes`; **`vastai` and `digitalocean` are not covered**, so a machine dstack
 loses there keeps billing until someone stops it
 ([dstackai/dstack#4546](https://github.com/dstackai/dstack/issues/4546)). Before relying on a
 new backend, check that dstack's orphan cleanup supports it.

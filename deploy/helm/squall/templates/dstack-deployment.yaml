@@ -209,7 +209,7 @@ spec:
           value: {{ .Values.dstack.serviceClientTimeoutSeconds | quote }}
         # dstack destroys machines it marked and no longer tracks; unmarked
         # machines are never touched. Backends without resource listing
-        # (vastai, digitalocean in 0.22.6) are not covered: dstackai/dstack#4546.
+        # (vastai, digitalocean in 0.22.9) are not covered: dstackai/dstack#4546.
         - name: DSTACK_SERVER_ORPHAN_CLEANUP_MODE
           value: delete
         {{- if .Values.dstack.database.existingSecret.name }}
