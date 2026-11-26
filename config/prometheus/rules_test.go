@@ -49,9 +49,9 @@ func TestRules_ObservedExceedsDeclaredShape(t *testing.T) {
 	}
 
 	rules := rule.Spec.Groups[0].Rules
-	if len(rules) != 8 {
-		t.Fatalf("rules = %d, want exactly 8 (age, price, provisioning loop, uncontrolled, "+
-			"capacity-while-not-ready, idle-but-awake, controller absent, hard stop)", len(rules))
+	if len(rules) != 10 {
+		t.Fatalf("rules = %d, want exactly 10 (age, price, provisioning loop, uncontrolled, "+
+			"capacity-while-not-ready, idle-but-awake, controller absent, hard stop, reaper stale, reaper refused)", len(rules))
 	}
 
 	for _, r := range rules {
@@ -80,6 +80,9 @@ func TestRules_ObservedExceedsDeclaredShape(t *testing.T) {
 		"squall_model_idle_seconds > 3 * squall_model_scale_down_delay_seconds":                   false,
 		"absent(controller_runtime_active_workers{controller=\"squall-model\"}) > 0":              false,
 		"increase(squall_model_provisioning_outcomes_total{reason=\"hard_stop\"}[1h]) > 0":        false,
+		// max(): a standby replica never sweeps and exports 0
+		"time() - max(squall_reaper_last_success_timestamp_seconds) > 600": false,
+		"max(squall_reaper_refused_runs) > 0":                              false,
 	}
 	for _, r := range rules {
 		if _, ok := wantExprs[r.Expr]; ok {

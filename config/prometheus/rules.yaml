@@ -109,3 +109,30 @@ spec:
           annotations:
             summary: Model {{ $labels.name }} was stopped by its hardStop dead-man's switch
             description: spec.hardStop elapsed and dstack terminated the job; investigate the dead controller or guardian.
+        - alert: SquallReaperStale
+          expr: time() - max(squall_reaper_last_success_timestamp_seconds) > 600
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: The orphan reaper has not completed a sweep in over 10 minutes
+            description: >-
+              Orphan detection is not running: no replica has finished a
+              reaper sweep (list Models, list dstack runs, stop strays) for
+              10m. A Model deleted without its finalizer running would leave
+              its GPU billing with nothing to stop it. Check the controller
+              logs for "orphan sweep failed".
+        - alert: SquallReaperRefusedRuns
+          expr: max(squall_reaper_refused_runs) > 0
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: The orphan reaper is leaving an active run that no Model claims by name
+            description: >-
+              A dstack run that no Model claims by name is active and squall
+              will not stop it. Either it carries no squall stamp (someone
+              else's run on a shared dstack server, or squall's own without
+              its stamp) or it is stamped by a live Model under another name.
+              The controller log names the run; if it is squall's, stop it by
+              hand.
