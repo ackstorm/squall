@@ -323,10 +323,15 @@ type deleteRunsRequest struct {
 }
 
 // listRunsRequest is the body of /api/runs/list. The server's page size is
-// capped at 100, and only_active drops finished runs.
+// capped at 100, and only_active drops finished runs. Pages are newest
+// first; the cursor continues after the last run of the previous page.
 type listRunsRequest struct {
 	OnlyActive bool `json:"only_active"`
 	Limit      int  `json:"limit"`
+	// The cursor is the last run of the previous page: submitted_at exactly
+	// as the server wrote it, and its id. Both are omitted on the first page.
+	PrevSubmittedAt string `json:"prev_submitted_at,omitempty"`
+	PrevRunID       string `json:"prev_run_id,omitempty"`
 }
 
 type stopRunsRequest struct {

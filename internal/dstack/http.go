@@ -119,32 +119,54 @@ func (c *HTTPClient) Delete(ctx context.Context, name string) error {
 // listRunsLimit is the server's maximum page size.
 const listRunsLimit = 100
 
-// ListRuns backs the reconcile loop's orphan diff (§5.2). It lists active
-// runs only; a finished run cannot bill.
+// listRunsMaxPages bounds the pagination loop: 50 pages is 5000 active runs,
+// far past any real server, and a server that ignores the cursor errors out
+// here instead of looping.
+const listRunsMaxPages = 50
+
+// ListRuns backs the reconcile loop's orphan diff (§5.2). It lists every
+// active run, page by page; a finished run cannot bill.
 func (c *HTTPClient) ListRuns(ctx context.Context) ([]Run, error) {
-	// MEASURED: /api/project/{p}/runs/list answers 405. `list` lives on the
-	// ROOT router (`/api/runs/list`), unlike every other run operation.
-	body, err := c.post(ctx, "/api/runs/list", listRunsRequest{OnlyActive: true, Limit: listRunsLimit})
-	if err != nil {
-		return nil, err
-	}
-	var wires []json.RawMessage
-	if err := json.Unmarshal(body, &wires); err != nil {
-		return nil, fmt.Errorf("dstack: decode run list: %w", err)
-	}
-	// ponytail: one page; a full page is an error. Page with prev_submitted_at/prev_run_id if a server ever holds 100 active runs.
-	if len(wires) >= listRunsLimit {
-		return nil, fmt.Errorf("dstack: run list returned a full page (%d runs) and may be truncated", len(wires))
-	}
-	runs := make([]Run, 0, len(wires))
-	for _, w := range wires {
-		run, err := decodeRun(w)
+	var runs []Run
+	req := listRunsRequest{OnlyActive: true, Limit: listRunsLimit}
+	lastID := ""
+	for page := 0; page < listRunsMaxPages; page++ {
+		// MEASURED: /api/project/{p}/runs/list answers 405. `list` lives on the
+		// ROOT router (`/api/runs/list`), unlike every other run operation.
+		body, err := c.post(ctx, "/api/runs/list", req)
 		if err != nil {
 			return nil, err
 		}
-		runs = append(runs, *run)
+		var wires []json.RawMessage
+		if err := json.Unmarshal(body, &wires); err != nil {
+			return nil, fmt.Errorf("dstack: decode run list: %w", err)
+		}
+		var lastSubmittedAt string
+		for _, w := range wires {
+			run, err := decodeRun(w)
+			if err != nil {
+				return nil, err
+			}
+			runs = append(runs, *run)
+			var raw struct {
+				SubmittedAt string `json:"submitted_at"`
+			}
+			if err := json.Unmarshal(w, &raw); err != nil {
+				return nil, fmt.Errorf("dstack: decode run list: %w", err)
+			}
+			lastSubmittedAt = raw.SubmittedAt
+		}
+		if len(wires) < listRunsLimit {
+			return runs, nil
+		}
+		last := runs[len(runs)-1].RunID
+		if last == lastID {
+			return nil, fmt.Errorf("dstack: run list page did not advance past run %q", last)
+		}
+		lastID = last
+		req.PrevSubmittedAt, req.PrevRunID = lastSubmittedAt, last
 	}
-	return runs, nil
+	return nil, fmt.Errorf("dstack: run list exceeded %d pages", listRunsMaxPages)
 }
 
 // BackendConfigured reports whether backend is configured on the dstack

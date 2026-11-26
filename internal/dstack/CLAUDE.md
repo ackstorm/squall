@@ -61,8 +61,7 @@ What actually matters when you touch this package:
   path answers 405.
 - **The list request is `{"only_active": true, "limit": 100}`.** The server defaults to
   `only_active: false`, `limit: 100` (max 100), newest first, and keeps terminal runs listed, so
-  an empty body shows only the newest 100 runs of any status. A full page is an error, never
-  silently truncated. `run_spec.configuration.max_duration` is an int, `"off"` or null (a
+  an empty body shows only the newest 100 runs of any status. `ListRuns` pages with `prev_submitted_at` (the server's raw string) and `prev_run_id` from the last run of a full page, capped at 50 pages, and errors on a cursor that does not advance. `run_spec.configuration.max_duration` is an int, `"off"` or null (a
   colleague's run can carry any), decoded by `maxDurationWire`; `"off"` is `Run.MaxDuration` 0.
 - **Apply is two steps**: `get_plan` then `apply`. Echo back the server's normalised
   `run_spec` verbatim (that is why `runPlanWire` keeps it as `json.RawMessage`) — not your
@@ -87,10 +86,10 @@ asleep), F21 (runs land on fleets; the instance is released by fleet `idle_durat
 the flip), the override refusal (an apply against an ACTIVE run whose submitted
 `idle_duration` differs from the stored one is HTTP 400 "Cannot override active run" —
 D156/D170; every configuration field the fake learns to decode must join that comparison or
-the guard goes quiet), F23 (gateway answers immediately: 503 / 404 / 403, and never wakes a service).
+the guard goes quiet; `env` is stored, echoed and compared), F23 (gateway answers immediately: 503 / 404 / 403, and never wakes a service).
 
 - The list route honours `only_active` (terminal runs excluded) and `limit` (default 100, 422
-  outside 0..100), like dstack; `ListRuns(onlyActive, limit)` takes the same two arguments.
+  outside 0..100), like dstack; `ListRuns(onlyActive, limit)` takes the same two arguments, `ListRunsPage` adds the cursor (`submitted_at` descending, id ascending).
 - Two call surfaces, one state machine: every exported method is directly callable, and
   `Handler()` mounts the same `Server` behind `net/http`. There is no second implementation
   to drift.

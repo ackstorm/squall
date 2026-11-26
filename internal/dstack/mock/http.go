@@ -29,7 +29,8 @@ type runSpecInWire struct {
 		// IdleDuration is decoded as a POINTER so an absent key stays
 		// distinguishable from an explicit 0 — the difference dstack itself
 		// treats as two different specs, and the whole subject of D156.
-		IdleDuration *int `json:"idle_duration"`
+		IdleDuration *int              `json:"idle_duration"`
+		Env          map[string]string `json:"env"`
 	} `json:"configuration"`
 }
 
@@ -46,7 +47,8 @@ type normalizedRunSpecWire struct {
 		// omitempty is load-bearing: get_plan echoes this struct back and
 		// apply decodes the echo, so an absent idle_duration has to survive
 		// the round trip as absent rather than as 0.
-		IdleDuration *int `json:"idle_duration,omitempty"`
+		IdleDuration *int              `json:"idle_duration,omitempty"`
+		Env          map[string]string `json:"env,omitempty"`
 	} `json:"configuration"`
 }
 
@@ -120,8 +122,9 @@ type runOutWire struct {
 	RunSpec       struct {
 		RunName       string `json:"run_name"`
 		Configuration struct {
-			Replicas     replicasWire `json:"replicas"`
-			IdleDuration *int         `json:"idle_duration,omitempty"`
+			Replicas     replicasWire      `json:"replicas"`
+			IdleDuration *int              `json:"idle_duration,omitempty"`
+			Env          map[string]string `json:"env,omitempty"`
 		} `json:"configuration"`
 	} `json:"run_spec"`
 }
@@ -135,6 +138,7 @@ func runToWire(run *Run) runOutWire {
 	out.RunSpec.RunName = run.Name
 	out.RunSpec.Configuration.Replicas = replicasWire{Min: run.Replicas, Max: run.Replicas}
 	out.RunSpec.Configuration.IdleDuration = run.IdleDuration
+	out.RunSpec.Configuration.Env = run.Env
 	if run.ServiceURL != "" {
 		out.Service = &serviceWire{URL: run.ServiceURL}
 	}
@@ -242,6 +246,7 @@ func (s *Server) handleGetPlan(w http.ResponseWriter, r *http.Request) {
 	normalized.RunName = in.RunSpec.RunName
 	normalized.Configuration.Replicas = replicasWire{Min: in.RunSpec.Configuration.Replicas, Max: in.RunSpec.Configuration.Replicas}
 	normalized.Configuration.IdleDuration = in.RunSpec.Configuration.IdleDuration
+	normalized.Configuration.Env = in.RunSpec.Configuration.Env
 	specBody, err := json.Marshal(normalized)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error(), "error")
@@ -280,6 +285,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		Current:      current,
 		Force:        in.Force,
 		IdleDuration: spec.Configuration.IdleDuration,
+		Env:          spec.Configuration.Env,
 	})
 	switch {
 	case errors.Is(err, ErrCannotOverride):
@@ -368,8 +374,10 @@ func (s *Server) handleStopRun(w http.ResponseWriter, r *http.Request) {
 }
 
 type listRunsRequestWire struct {
-	OnlyActive bool `json:"only_active"`
-	Limit      int  `json:"limit"`
+	OnlyActive      bool       `json:"only_active"`
+	Limit           int        `json:"limit"`
+	PrevSubmittedAt *time.Time `json:"prev_submitted_at"`
+	PrevRunID       *string    `json:"prev_run_id"`
 }
 
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
@@ -382,7 +390,11 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "limit must be between 0 and 100", "error")
 		return
 	}
-	runs := s.ListRuns(in.OnlyActive, in.Limit)
+	var after *ListCursor
+	if in.PrevSubmittedAt != nil && in.PrevRunID != nil {
+		after = &ListCursor{SubmittedAt: *in.PrevSubmittedAt, RunID: *in.PrevRunID}
+	}
+	runs := s.ListRunsPage(in.OnlyActive, in.Limit, after)
 	wires := make([]runOutWire, len(runs))
 	for i, run := range runs {
 		wires[i] = runToWire(&run)
