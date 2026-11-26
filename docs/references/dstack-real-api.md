@@ -25,7 +25,7 @@ There is no GET anywhere and no `/runs/{name}` path parameter. The run name trav
 body (`GetRunRequest{run_name, id}`).
 
 `list` is paged and unfiltered by default (`server/schemas/runs.py`, `ListRunsRequest`, same
-at 0.21.2 and 0.22.6): `only_active: false`, `limit: 100` (max 100), `ascending: false`, with
+at 0.21.2, 0.22.6 and 0.22.9): `only_active: false`, `limit: 100` (max 100), `ascending: false`, with
 `prev_submitted_at` / `prev_run_id` as the cursor. `only_active` filters out
 `RunStatus.finished_statuses()`. Terminal runs stay listed, so an empty body returns the
 newest 100 runs of any status across every project the token can see.
@@ -35,7 +35,7 @@ Descending order is `submitted_at DESC, id ASC`, and a cursor selects
 `submitted_at < prev_submitted_at OR (submitted_at == prev_submitted_at AND id > prev_run_id)`
 (`server/services/runs/__init__.py`). `list` and `get` build each run through the same
 `run_model_to_run(..., return_in_api=True)`, so a listed run carries the same `run_spec`,
-`env` included. Both facts are read from source at 0.22.6; neither the cursor round trip nor
+`env` included. Both facts are read from source at 0.22.6 and 0.22.9; neither the cursor round trip nor
 `env` on the list route has been measured against a running server.
 
 ## 2. Apply is two-step, and the CAS is an object, not an integer
@@ -241,6 +241,10 @@ default   dstack-main-ssh-jump-pod         1/1  Running   # created BY dstack, u
 
 No GPU operator needed for a CPU run. The SSH jump pod is provisioned automatically; only
 `proxy_jump.hostname` had to be set, because kind nodes have no `ExternalIP`.
+
+From 0.22.7 the jump pod is owned by a ReplicaSet (`apps/replicasets` `get` and `create` in the
+backend namespace), and orphan cleanup on this backend needs `list` on pods, services and
+secrets. dstack's own Role for this: `mkdocs/snippets/kubernetes/dstack-backend-role.yaml`.
 
 ### 9.2 A run REQUIRES a fleet, and the Kubernetes fleet must have `nodes` target 0
 

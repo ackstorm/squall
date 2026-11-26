@@ -11,6 +11,19 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+## [0.1.15] — 2026-11-26
+
+### Changed
+
+- **dstack server 0.22.6 -> 0.22.9.** Orphan cleanup now also covers the `kubernetes` backend.
+  Vast.ai and DigitalOcean are still not covered.
+
+### Fixed
+
+- **The chart's RBAC for dstack's Kubernetes backend matches what dstack 0.22.7+ needs:** `get` and
+  `create` on `apps/replicasets`, which dstack uses for its SSH jump pod, and `list` on pods,
+  services and secrets for its orphan cleanup.
+
 ## [0.1.14] — 2026-11-26
 
 ### Changed
@@ -471,7 +484,8 @@ order to run this safely are listed.
   so a Model verified before upgrading keeps it empty until its run generation
   is replaced. Empty means "do not rewrite", which is the safe direction.
 
-[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.14...HEAD
+[Unreleased]: https://github.com/ackstorm/squall/compare/v0.1.15...HEAD
+[0.1.15]: https://github.com/ackstorm/squall/compare/v0.1.14...v0.1.15
 [0.1.14]: https://github.com/ackstorm/squall/compare/v0.1.13...v0.1.14
 [0.1.13]: https://github.com/ackstorm/squall/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/ackstorm/squall/compare/v0.1.11...v0.1.12
