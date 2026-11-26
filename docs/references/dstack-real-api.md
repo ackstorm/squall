@@ -31,6 +31,13 @@ at 0.21.2 and 0.22.6): `only_active: false`, `limit: 100` (max 100), `ascending:
 newest 100 runs of any status across every project the token can see.
 `run_spec.configuration.max_duration` is an integer, the string `"off"`, or null.
 
+Descending order is `submitted_at DESC, id ASC`, and a cursor selects
+`submitted_at < prev_submitted_at OR (submitted_at == prev_submitted_at AND id > prev_run_id)`
+(`server/services/runs/__init__.py`). `list` and `get` build each run through the same
+`run_model_to_run(..., return_in_api=True)`, so a listed run carries the same `run_spec`,
+`env` included. Both facts are read from source at 0.22.6; neither the cursor round trip nor
+`env` on the list route has been measured against a running server.
+
 ## 2. Apply is two-step, and the CAS is an object, not an integer
 
 `server/schemas/runs.py`:

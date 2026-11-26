@@ -25,9 +25,11 @@ out explicitly, because that is the class of change worth reading twice.
 - **`SquallModelCapacityWhileNotReady` can fire.** Its expression could never match, so
   billed capacity that was not serving raised no alert.
 - **The orphan reaper sees every active run.** It read only the newest 100 runs of any
-  status, so an older orphan could bill unseen. It now lists active runs only and fails
-  loudly at 100 instead of truncating; a colleague's run with `max_duration: off` no
-  longer fails the list.
+  status, so an older orphan could bill unseen. It now pages through every active run; a
+  colleague's run with `max_duration: off` no longer fails the list.
+- **A run always has a deadline.** If the controller died right after dstack created the
+  GPU, the run was left with no provisioning deadline and no idle anchor. Any live run
+  found without one now gets it on the next pass.
 - **A proxy replica that fails readiness still counts as activity evidence**, so its
   in-flight generations block an idle sleep and a delete's drain.
 - **A recreated run gets a fresh provisioning deadline** instead of inheriting the dead
@@ -45,6 +47,10 @@ out explicitly, because that is the class of change worth reading twice.
 
 - **`Ready` status condition** on a Model: True while its run is up and Ready. Its
   transition time is what the provisioning deadline is measured from.
+- **Orphan reaper health.** `squall_reaper_last_success_timestamp_seconds` and the critical
+  alert `SquallReaperStale` fire when orphan detection stops working;
+  `squall_reaper_refused_runs` and the warning alert `SquallReaperRefusedRuns` report a
+  run no Model claims that squall will not stop on its own.
 
 ## [0.1.12] — 2026-11-26
 
