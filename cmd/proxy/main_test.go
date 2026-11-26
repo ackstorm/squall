@@ -3,9 +3,13 @@
 package main
 
 import (
+	"context"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/ackstorm/squall/internal/clock"
 	"github.com/ackstorm/squall/internal/proxy"
@@ -59,5 +63,78 @@ func TestDstackAuthWarning(t *testing.T) {
 					tc.backendURLTemplate, tc.dstackToken, got, tc.wantWarning)
 			}
 		})
+	}
+}
+
+// serve must not return while a request is still being handled: the drain is
+// what lets a streaming generation finish after SIGTERM.
+func TestServe_DrainsInFlightRequestsBeforeReturning(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		_, _ = io.WriteString(w, "complete")
+	})}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Addr = ln.Addr().String()
+	_ = ln.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	served := make(chan error, 1)
+	go func() { served <- serve(ctx, srv, 30*time.Second) }()
+
+	body := make(chan string, 1)
+	go func() {
+		var resp *http.Response
+		var err error
+		for i := 0; i < 100; i++ { // the listener comes up asynchronously
+			if resp, err = http.Get("http://" + srv.Addr + "/"); err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if err != nil {
+			body <- "get failed: " + err.Error()
+			return
+		}
+		defer resp.Body.Close() //nolint:errcheck // test cleanup
+		b, _ := io.ReadAll(resp.Body)
+		body <- string(b)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("handler never started")
+	}
+	cancel()
+
+	select {
+	case err := <-served:
+		t.Fatalf("serve returned (%v) while a request was still in flight", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case got := <-body:
+		if got != "complete" {
+			t.Fatalf("client read %q, want %q", got, "complete")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("client never finished")
+	}
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("serve = %v, want nil", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve never returned after the drain")
 	}
 }

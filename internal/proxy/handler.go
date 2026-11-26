@@ -561,17 +561,11 @@ func (h *Handler) commit(w http.ResponseWriter, resp *http.Response, rec *reques
 	}
 
 	rec.outcome = outcomeCommitted
-	// Evidence (b), tightened 2026-08-31. Two things changed and both matter to
-	// the unhealthy teardown that now reads this:
-	//
-	//   - Only a 2xx counts. This used to fire for ANY status we agreed to
-	//     stream, so a replica answering 500 to everything looked exactly as
-	//     healthy as one serving tokens -- which made "no successful response
-	//     in 15 minutes" unable to fire against precisely the replica it exists
-	//     to catch.
-	//   - It fires AFTER delivery, not before. A replica that accepts a
-	//     request, sends headers and then hangs is the failure this evidence
-	//     must not launder into proof of health.
+	// Evidence (b), recorded AFTER delivery: a replica that accepts a request,
+	// sends headers and then hangs must not be laundered into proof of health.
+	// 2xx records a success, 5xx a failure. 1xx, 3xx and 4xx record neither: a
+	// 4xx is the caller's malformed request, not evidence about the replica,
+	// and counting it would let a few bad requests condemn a healthy GPU.
 	//
 	// A client that disconnects mid-stream is NOT the replica's failure, so it
 	// records neither a success nor a failure. The next request will.
@@ -588,7 +582,9 @@ func (h *Handler) commit(w http.ResponseWriter, resp *http.Response, rec *reques
 		h.Activity.Success(model)
 		return
 	}
-	h.Activity.Failure(model)
+	if resp.StatusCode >= 500 {
+		h.Activity.Failure(model)
+	}
 }
 
 // answerWait is §7's wait contract: 503/404 + Retry-After + a JSON body
