@@ -24,6 +24,9 @@ grep -F 'name: squall-dstack' <<<"${monitored}" >/dev/null
 # Default (SQLite) install still gets the service-client timeout.
 grep -A1 'name: DSTACK_SERVICE_CLIENT_TIMEOUT' <<<"${rendered}" | grep -Fx '          value: "600"' >/dev/null
 
+# dstack deletes its own orphans on every install.
+grep -A1 'name: DSTACK_SERVER_ORPHAN_CLEANUP_MODE' <<<"${rendered}" | grep -Fx '          value: delete' >/dev/null
+
 # metricsBindAddress "0" disables metrics: no port, no flags.
 off="$(helm template squall deploy/helm/squall \
   --set-string dstack.adminToken.value=test \

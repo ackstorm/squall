@@ -11,6 +11,14 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+### Changed
+
+- **The bundled dstack server destroys its own orphaned machines** (`DSTACK_SERVER_ORPHAN_CLEANUP_MODE=delete`;
+  dstack's default only reports them). It acts only on machines carrying dstack's own mark and no
+  longer tracked; anything else on the account is left alone. Covered in dstack 0.22.6: AWS, GCP,
+  Azure, RunPod, Nebius. **Not covered: Vast.ai and DigitalOcean**
+  ([dstackai/dstack#4546](https://github.com/dstackai/dstack/issues/4546)).
+
 ## [0.1.13] — 2026-11-26
 
 ### Fixed

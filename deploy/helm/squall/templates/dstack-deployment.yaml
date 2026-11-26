@@ -207,6 +207,11 @@ spec:
         # SSH tunnel, which takes dstack's proxy out of the data path.
         - name: DSTACK_SERVICE_CLIENT_TIMEOUT
           value: {{ .Values.dstack.serviceClientTimeoutSeconds | quote }}
+        # dstack destroys machines it marked and no longer tracks; unmarked
+        # machines are never touched. Backends without resource listing
+        # (vastai, digitalocean in 0.22.6) are not covered: dstackai/dstack#4546.
+        - name: DSTACK_SERVER_ORPHAN_CLEANUP_MODE
+          value: delete
         {{- if .Values.dstack.database.existingSecret.name }}
         # DSTACK_DATABASE_URL is the ONLY switch dstack reads for its DB
         # backend (server/settings.py's get_database_url()) — sourced from a

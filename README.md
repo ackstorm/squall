@@ -196,6 +196,15 @@ wake is a full cold provision. `holdTimeout` must cover one regardless of which 
 **Only `vastai` and `kubernetes` have been run end to end.** The rest are untested rather
 than unsupported — worth knowing which of the two you are dealing with when something fails.
 
+**Orphaned machines.** The chart runs dstack with `DSTACK_SERVER_ORPHAN_CLEANUP_MODE=delete`:
+every hour dstack lists the provider's machines carrying its own mark and destroys those it
+no longer tracks. Machines without its mark, such as other dstack servers' or your own GPUs
+on the same account, are never touched. In dstack 0.22.6 this covers `aws`, `gcp`, `azure`,
+`runpod` and `nebius`; **`vastai` and `digitalocean` are not covered**, so a machine dstack
+loses there keeps billing until someone stops it
+([dstackai/dstack#4546](https://github.com/dstackai/dstack/issues/4546)). Before relying on a
+new backend, check that dstack's orphan cleanup supports it.
+
 > **Helm never upgrades CRDs.** Files under a chart's `crds/` directory are applied on
 > install and ignored on every upgrade. After a version bump, apply the CRD yourself — it
 > ships as a release asset:
