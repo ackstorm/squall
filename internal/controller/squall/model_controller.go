@@ -318,11 +318,11 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 
 		// §5.2: journal the provisioningTimeout anchor in the same act as the
-		// 0->1 actuation — only the actuation site knows the moment. It is set
-		// ONCE per wake and must not be rewritten on later reconciles of the
-		// same wake, or the deadline would never expire. Task 8.3 consumes it;
-		// this block implements no timeout behaviour.
-		if action.Replicas > 0 && model.Status.WakeStartedAt == nil {
+		// 0->1 actuation — only the actuation site knows the moment. Decide
+		// emits a wake Apply only against an absent or zero-replica run, so
+		// every such actuation starts a new anchor; later reconciles of the
+		// same wake never reach this block and leave it alone.
+		if action.Replicas > 0 {
 			model.Status.WakeStartedAt = &metav1.Time{Time: now}
 		}
 		if action.Replicas == 0 {
@@ -438,6 +438,16 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 	}
 
+	// Set after Decide: Decide reads the prior Ready condition.
+	readyCond := metav1.Condition{
+		Type: squallv1alpha1.ConditionReady, Status: metav1.ConditionFalse,
+		Reason: squallv1alpha1.ReasonNotReady,
+	}
+	if observed.Run != nil && observed.Run.Replicas > 0 && observed.Ready {
+		readyCond.Status, readyCond.Reason = metav1.ConditionTrue, squallv1alpha1.ReasonReady
+	}
+	meta.SetStatusCondition(&model.Status.Conditions, readyCond)
+
 	model.Status.Phase = newPhase
 
 	// LIVE-1: Patch, not Update. Status().Update carries an optimistic-lock
@@ -485,13 +495,13 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// dstack is not a Kubernetes object: nothing wakes this controller when
 	// a run dies, becomes Ready, or a provisioning backoff lapses, so those
-	// states are re-evaluated on a timer. An awake on-demand Model needs it
-	// for the §6 idle-sleep flip (see IdleRequeueInterval). A Waking or
-	// Recreating one (throttled included) needs it for F20 death detection,
-	// the D163 retry and provisioningTimeout — without it a pinned Model
-	// whose run failed sat Waking on the dead run indefinitely (issue #4).
-	awakeOnDemand := observed.Run != nil && observed.Run.Replicas > 0 && model.Spec.MinReplicas == 0
-	if awakeOnDemand || newPhase == squallv1alpha1.ModelPhaseWaking || newPhase == squallv1alpha1.ModelPhaseRecreating {
+	// states are re-evaluated on a timer. A live run needs it for F20 death
+	// detection and, when on demand, the §6 idle-sleep flip (see
+	// IdleRequeueInterval); pinned Models included. A Waking or Recreating
+	// one (throttled included) needs it for the D163 retry and
+	// provisioningTimeout.
+	runLive := observed.Run != nil && observed.Run.Replicas > 0
+	if runLive || newPhase == squallv1alpha1.ModelPhaseWaking || newPhase == squallv1alpha1.ModelPhaseRecreating {
 		return ctrl.Result{RequeueAfter: r.idleRequeueInterval()}, nil
 	}
 
@@ -1110,14 +1120,9 @@ func (r *ModelReconciler) gatherActivity(ctx context.Context, name string, now t
 	// completeness isn't silently bypassed — the query below simply fails
 	// to connect, which aggregateActivity folds into Complete: false.
 	//
-	// D104: serving, not ready. A proxy replica whose readiness probe dips
-	// under load, or that is terminating through srv.Shutdown on a rolling
-	// update, can still HOLD live generations. EndpointSlice retains it while
-	// serving=true and terminating=true; excluding it made those generations
-	// invisible to the sleep decision and to the finalizer's drain gate. A
-	// not-ready or terminating replica that refuses the query folds into
-	// Complete: false, which blocks sleep; not-ready still counts, and now
-	// terminating does too. Refused means ambiguous, not idle.
+	// Every endpoint address is queried, ready or not: a proxy replica that
+	// fails readiness or is terminating can still hold live generations. One
+	// that refuses the query folds into Complete: false, which blocks sleep.
 	var addrs []string
 	for _, slice := range slices.Items {
 		port := ""
@@ -1125,9 +1130,6 @@ func (r *ModelReconciler) gatherActivity(ctx context.Context, name string, now t
 			port = strconv.Itoa(int(*slice.Ports[0].Port))
 		}
 		for _, endpoint := range slice.Endpoints {
-			if endpoint.Conditions.Serving != nil && !*endpoint.Conditions.Serving {
-				continue
-			}
 			for _, addr := range endpoint.Addresses {
 				if port == "" {
 					addrs = append(addrs, addr)

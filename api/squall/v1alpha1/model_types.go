@@ -449,8 +449,9 @@ type ModelSpec struct {
 	DrainTimeout metav1.Duration `json:"drainTimeout,omitempty"`
 
 	// ProvisioningTimeout is the single age-based DESTRUCTIVE trigger in
-	// the whole controller contract (§5.2): a run that never reaches Ready
-	// within this window is destroyed, alarmed, and marked Dead. No other
+	// the whole controller contract (§5.2): a run that stays unready for
+	// this whole window — counted from its wake, or from the moment it last
+	// lost readiness — is destroyed, alarmed, and marked Dead. No other
 	// timeout in this spec destroys anything — see MaxLifetime.
 	ProvisioningTimeout metav1.Duration `json:"provisioningTimeout"`
 

@@ -31,8 +31,10 @@ a costly recreate.
 
 - **`Ready` is reachable in production.** `observe()` derives `Observed.Ready` from dstack
   probe evidence (`run.ProbesReady`) or a recent successful forward (`freshSuccess`); do not
-  describe `ModelPhaseReady` as unreachable. A wake that remains unready past
-  `spec.provisioningTimeout` takes the destructive timeout path.
+  describe `ModelPhaseReady` as unreachable. A run that stays unready for a
+  continuous `spec.provisioningTimeout` — counted from the wake, or from the moment it last
+  lost readiness (the `Ready` condition's `LastTransitionTime`) — takes the destructive
+  timeout path. One unready reading on a run that was Ready does not.
 
 - **`Apply` must carry the `BaseDeploymentNum` actually observed** — not cached, defaulted or
   zero. A stale base either spuriously conflicts or defeats the CAS entirely.

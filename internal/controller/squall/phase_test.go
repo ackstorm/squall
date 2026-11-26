@@ -148,9 +148,9 @@ func TestUncontrolledDue_FreshDemandResetsClock(t *testing.T) {
 
 func TestProvisioningDue(t *testing.T) {
 	now := time.Now()
-	old := metav1.NewTime(now.Add(-25 * time.Minute))
-	recent := metav1.NewTime(now.Add(-5 * time.Minute))
-	if !provisioningDue(&old, false, 20*time.Minute, now) || provisioningDue(&recent, false, 20*time.Minute, now) || provisioningDue(&old, true, 20*time.Minute, now) || provisioningDue(nil, false, 20*time.Minute, now) || provisioningDue(&old, false, 0, now) {
+	old := squallv1alpha1.ModelStatus{WakeStartedAt: &metav1.Time{Time: now.Add(-25 * time.Minute)}}
+	recent := squallv1alpha1.ModelStatus{WakeStartedAt: &metav1.Time{Time: now.Add(-5 * time.Minute)}}
+	if !provisioningDue(old, false, 20*time.Minute, now) || provisioningDue(recent, false, 20*time.Minute, now) || provisioningDue(old, true, 20*time.Minute, now) || provisioningDue(squallv1alpha1.ModelStatus{}, false, 20*time.Minute, now) || provisioningDue(old, false, 0, now) {
 		t.Fatal("unexpected provisioning deadline result")
 	}
 }

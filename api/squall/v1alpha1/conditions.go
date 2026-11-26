@@ -46,6 +46,11 @@ const (
 	// the fact. Both end at phase Asleep on purpose, so that the proxy, the
 	// wait contract and the wake path need no knowledge of this feature at all.
 	ConditionHealthy = "Healthy"
+
+	// ConditionReady is True exactly when a live run with replicas > 0 is
+	// Ready, and False otherwise. Its LastTransitionTime is the instant
+	// readiness was gained or lost, which anchors the provisioning deadline.
+	ConditionReady = "Ready"
 )
 
 // Reasons. Kept specific: "the backend is not configured on the server" and
@@ -101,6 +106,8 @@ const (
 	// run's verdict would be a statement about a different machine.
 	ReasonHealthy             = "Healthy"
 	ReasonProvisioningTimeout = "ProvisioningTimeout"
+	ReasonReady               = "Ready"
+	ReasonNotReady            = "NotReady"
 	ReasonProvisioned         = "Provisioned"
 	ReasonInsufficientCredit  = "InsufficientCredit"
 	ReasonNoCapacity          = "NoCapacity"
