@@ -3,7 +3,7 @@
 **Scale-to-zero LLM serving on GPUs that are not in your cluster.**
 
 ![status](https://img.shields.io/badge/status-pre--alpha-orange)
-![release](https://img.shields.io/badge/release-v0.1.14-green)
+![release](https://img.shields.io/badge/release-v0.1.15-green)
 ![go](https://img.shields.io/badge/go-1.27.3-00ADD8)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 
@@ -125,7 +125,7 @@ See [Send it a request](#send-it-a-request) for why that decides your `holdTimeo
 The chart deploys squall **and a dstack server** — you do not need to run dstack yourself.
 
 ```bash
-helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.14 \
+helm install squall oci://ghcr.io/ackstorm/charts/squall --version 0.1.15 \
   --namespace squall-system --create-namespace \
   --set-string dstack.adminToken.value="$(openssl rand -hex 16)" \
   --set controller.env.dstackURL="http://dstack.squall-system.svc.cluster.local:3000"
@@ -138,7 +138,7 @@ until you do this, and `kubectl apply` of a Model using one fails with `unknown 
 
 ```bash
 kubectl apply --server-side -f \
-  https://github.com/ackstorm/squall/releases/download/v0.1.14/squall.ackstorm.ai_models.yaml
+  https://github.com/ackstorm/squall/releases/download/v0.1.15/squall.ackstorm.ai_models.yaml
 ```
 
 With no `dstack.backends`, dstack provisions onto your own cluster — no GPU, no bill, useful
