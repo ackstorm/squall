@@ -11,6 +11,41 @@ out explicitly, because that is the class of change worth reading twice.
 
 ## [Unreleased]
 
+### Fixed
+
+- **squall-proxy drains on SIGTERM.** It exited as soon as shutdown began, so every
+  rollout or node drain cut the generations in flight. It now waits for them, up to
+  `SQUALL_MAX_REQUEST_DURATION` or the pod's grace period, whichever ends first.
+- **One failed probe no longer destroys a run that was Ready.** `provisioningTimeout`
+  measures continuous unreadiness — since the wake, or since readiness was last lost —
+  instead of the run's age. Before, any unready reading on a run older than the timeout
+  stopped it, including under a live generation.
+- **The dstack token is no longer sent to the rented host.** Requests forwarded straight
+  to the replica over SSH carry no `Authorization` header.
+- **`SquallModelCapacityWhileNotReady` can fire.** Its expression could never match, so
+  billed capacity that was not serving raised no alert.
+- **The orphan reaper sees every active run.** It read only the newest 100 runs of any
+  status, so an older orphan could bill unseen. It now lists active runs only and fails
+  loudly at 100 instead of truncating; a colleague's run with `max_duration: off` no
+  longer fails the list.
+- **A proxy replica that fails readiness still counts as activity evidence**, so its
+  in-flight generations block an idle sleep and a delete's drain.
+- **A recreated run gets a fresh provisioning deadline** instead of inheriting the dead
+  run's and being stopped on the next pass.
+- **A pinned Model is re-evaluated on a timer**, so a dead run is noticed without waiting
+  for an unrelated event.
+- **A 4xx from the engine is not a replica failure.** Only 5xx counts toward the
+  unhealthy teardown; malformed or rate-limited requests cannot condemn a healthy GPU.
+- **Chart:** `dstack.serviceClientTimeoutSeconds` applies to every install, not only with
+  an external Postgres; `controller.metricsBindAddress: "0"` renders a valid Deployment,
+  and a host-qualified address keeps its port.
+- **README:** the quickstart Model uses an image digest, which the CRD requires.
+
+### Added
+
+- **`Ready` status condition** on a Model: True while its run is up and Ready. Its
+  transition time is what the provisioning deadline is measured from.
+
 ## [0.1.12] — 2026-11-26
 
 ### Added
